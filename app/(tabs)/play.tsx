@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Pressable,
   ScrollView,
-  Animated,
 } from 'react-native';
 import { Play as PlayIcon, RotateCcw, BookOpen, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/lib/theme';
@@ -30,7 +29,6 @@ export default function PlayScreen() {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [currentPassage, setCurrentPassage] = useState<Passage | null>(null);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const load = useCallback(async () => {
     if (!activeStory) return;
@@ -48,7 +46,6 @@ export default function PlayScreen() {
         setCurrentPassage(start);
         const startChoices = cData.filter((c) => c.from_passage_id === start.id);
         setHistory([{ passage: start, choices: startChoices }]);
-        fadeIn();
       } else {
         setCurrentPassage(null);
       }
@@ -72,22 +69,12 @@ export default function PlayScreen() {
     }
   }, [activeStory, load]);
 
-  const fadeIn = useCallback(() => {
-    fadeAnim.setValue(0);
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [fadeAnim]);
-
   const navigateTo = (passageId: string) => {
     const target = passages.find((p) => p.id === passageId);
     if (!target) return;
     const targetChoices = allChoices.filter((c) => c.from_passage_id === target.id);
     setCurrentPassage(target);
     setHistory((prev) => [...prev, { passage: target, choices: targetChoices }]);
-    fadeIn();
   };
 
   const restart = () => {
@@ -96,7 +83,6 @@ export default function PlayScreen() {
       const startChoices = allChoices.filter((c) => c.from_passage_id === start.id);
       setCurrentPassage(start);
       setHistory([{ passage: start, choices: startChoices }]);
-      fadeIn();
     }
   };
 
@@ -106,7 +92,6 @@ export default function PlayScreen() {
     setHistory(newHistory);
     const last = newHistory[newHistory.length - 1];
     setCurrentPassage(last.passage);
-    fadeIn();
   };
 
   if (!activeStory) {
@@ -162,7 +147,7 @@ export default function PlayScreen() {
         style={styles.scrollBody}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        <Animated.View style={{ opacity: fadeAnim }}>
+        <View>
           <View style={styles.passageSection}>
             <View style={styles.passageTitleRow}>
               <Text style={styles.passageTitle}>{currentPassage.title}</Text>
@@ -226,7 +211,7 @@ export default function PlayScreen() {
               )}
             </View>
           )}
-        </Animated.View>
+        </View>
       </ScrollView>
 
       <View style={styles.footer}>

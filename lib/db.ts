@@ -134,10 +134,13 @@ export async function fetchChoices(passageId: string): Promise<Choice[]> {
 }
 
 export async function fetchAllChoices(storyId: string): Promise<Choice[]> {
+  const passages = await fetchPassages(storyId);
+  if (passages.length === 0) return [];
+  const passageIds = passages.map((p) => p.id);
   const { data, error } = await supabase
     .from('choices')
-    .select('*, passages!from_passage_id_fkey!inner(story_id)')
-    .eq('passages.story_id', storyId)
+    .select('*')
+    .in('from_passage_id', passageIds)
     .order('sort_order', { ascending: true });
   if (error) throw new Error(mapError(error));
   return data ?? [];

@@ -11,7 +11,8 @@ import {
   Alert,
   Share,
 } from 'react-native';
-import { Plus, BookOpen, Download, Upload, MoreVertical, Trash2, Edit3, Download as DownloadIcon } from 'lucide-react-native';
+import { useRouter } from 'expo-router';
+import { Plus, BookOpen, Download, Upload, MoreVertical, Trash2, Edit3, Download as DownloadIcon, CheckCircle2 } from 'lucide-react-native';
 import { Colors } from '@/lib/theme';
 import { LoadingView, ErrorView, EmptyView, PrimaryButton } from '@/components/ui';
 import { fetchStories, createStory, deleteStory, exportStory, importStory } from '@/lib/db';
@@ -19,7 +20,8 @@ import type { Story } from '@/lib/types';
 import { useStory } from '@/lib/story-context';
 
 export default function LibraryScreen() {
-  const { setActiveStory } = useStory();
+  const { activeStory, setActiveStory } = useStory();
+  const router = useRouter();
   const [stories, setStories] = useState<Story[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -67,6 +69,7 @@ export default function LibraryScreen() {
     try {
       const story = await createStory(newTitle.trim(), newDesc.trim(), newAuthor.trim());
       setStories((prev) => [story, ...prev]);
+      setActiveStory(story);
       setShowCreate(false);
       setNewTitle('');
       setNewDesc('');
@@ -92,6 +95,9 @@ export default function LibraryScreen() {
             try {
               await deleteStory(story.id);
               setStories((prev) => prev.filter((s) => s.id !== story.id));
+              if (activeStory?.id === story.id) {
+                setActiveStory(null);
+              }
             } catch (e) {
               Alert.alert('Gagal menghapus', e instanceof Error ? e.message : undefined);
             }
@@ -125,6 +131,7 @@ export default function LibraryScreen() {
       const parsed = JSON.parse(importText.trim());
       const story = await importStory(parsed);
       setStories((prev) => [story, ...prev]);
+      setActiveStory(story);
       setShowImport(false);
       setImportText('');
     } catch (e) {
@@ -139,6 +146,7 @@ export default function LibraryScreen() {
 
   const openStory = (story: Story) => {
     setActiveStory(story);
+    router.navigate('/(tabs)/editor');
   };
 
   if (loading) return <LoadingView message="Memuat pustaka..." />;
@@ -174,36 +182,47 @@ export default function LibraryScreen() {
             }
           />
         }
-        renderItem={({ item }) => (
-          <Pressable
-            style={({ pressed }) => [styles.storyCard, pressed && styles.storyCardPressed]}
-            onPress={() => openStory(item)}>
-            <View style={styles.storyCardLeft}>
-              <View style={styles.storyIcon}>
-                <BookOpen size={20} color={Colors.primary[600]} strokeWidth={2} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.storyTitle} numberOfLines={1}>
-                  {item.title}
-                </Text>
-                {item.description ? (
-                  <Text style={styles.storyDesc} numberOfLines={2}>
-                    {item.description}
-                  </Text>
-                ) : null}
-                {item.author ? (
-                  <Text style={styles.storyAuthor}>oleh {item.author}</Text>
-                ) : null}
-              </View>
-            </View>
+        renderItem={({ item }) => {
+          const isActive = activeStory?.id === item.id;
+          return (
             <Pressable
-              hitSlop={12}
-              onPress={() => setMenuFor(item)}
-              style={styles.menuBtn}>
-              <MoreVertical size={20} color={Colors.neutral[400]} strokeWidth={2} />
+              style={({ pressed }) => [
+                styles.storyCard,
+                isActive && styles.storyCardActive,
+                pressed && styles.storyCardPressed,
+              ]}
+              onPress={() => openStory(item)}>
+              <View style={styles.storyCardLeft}>
+                <View style={[styles.storyIcon, isActive && styles.storyIconActive]}>
+                  {isActive ? (
+                    <CheckCircle2 size={20} color={Colors.primary[600]} strokeWidth={2} />
+                  ) : (
+                    <BookOpen size={20} color={Colors.primary[600]} strokeWidth={2} />
+                  )}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.storyTitle} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  {item.description ? (
+                    <Text style={styles.storyDesc} numberOfLines={2}>
+                      {item.description}
+                    </Text>
+                  ) : null}
+                  {item.author ? (
+                    <Text style={styles.storyAuthor}>oleh {item.author}</Text>
+                  ) : null}
+                </View>
+              </View>
+              <Pressable
+                hitSlop={12}
+                onPress={() => setMenuFor(item)}
+                style={styles.menuBtn}>
+                <MoreVertical size={20} color={Colors.neutral[400]} strokeWidth={2} />
+              </Pressable>
             </Pressable>
-          </Pressable>
-        )}
+          );
+        }}
       />
 
       {stories.length > 0 && (
@@ -352,6 +371,14 @@ const styles = StyleSheet.create({
   storyCardPressed: {
     transform: [{ scale: 0.98 }],
     borderColor: Colors.primary[200],
+  },
+  storyCardActive: {
+    borderColor: Colors.primary[500],
+    borderWidth: 2,
+    backgroundColor: Colors.primary[50],
+  },
+  storyIconActive: {
+    backgroundColor: Colors.primary[100],
   },
   storyCardLeft: {
     flex: 1,

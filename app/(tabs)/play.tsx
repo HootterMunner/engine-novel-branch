@@ -48,6 +48,7 @@ export default function PlayScreen() {
         setCurrentPassage(start);
         const startChoices = cData.filter((c) => c.from_passage_id === start.id);
         setHistory([{ passage: start, choices: startChoices }]);
+        fadeIn();
       } else {
         setCurrentPassage(null);
       }
@@ -72,13 +73,12 @@ export default function PlayScreen() {
   }, [activeStory, load]);
 
   const fadeIn = useCallback(() => {
+    fadeAnim.setValue(0);
     Animated.timing(fadeAnim, {
       toValue: 1,
       duration: 300,
       useNativeDriver: true,
-    }).start(() => {
-      fadeAnim.setValue(0);
-    });
+    }).start();
   }, [fadeAnim]);
 
   const navigateTo = (passageId: string) => {

@@ -30,13 +30,15 @@ export default function PlayScreen() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [currentPassage, setCurrentPassage] = useState<Passage | null>(null);
 
+  const storyId = activeStory?.id;
+
   const load = useCallback(async () => {
-    if (!activeStory) return;
+    if (!storyId) return;
     try {
       setError(null);
       const [pData, cData] = await Promise.all([
-        fetchPassages(activeStory.id),
-        fetchAllChoices(activeStory.id),
+        fetchPassages(storyId),
+        fetchAllChoices(storyId),
       ]);
       setPassages(pData);
       setAllChoices(cData);
@@ -54,10 +56,10 @@ export default function PlayScreen() {
     } finally {
       setLoading(false);
     }
-  }, [activeStory]);
+  }, [storyId]);
 
   useEffect(() => {
-    if (activeStory) {
+    if (storyId) {
       setLoading(true);
       setHistory([]);
       load();
@@ -67,7 +69,7 @@ export default function PlayScreen() {
       setCurrentPassage(null);
       setLoading(false);
     }
-  }, [activeStory, load]);
+  }, [storyId, load]);
 
   const navigateTo = (passageId: string) => {
     const target = passages.find((p) => p.id === passageId);

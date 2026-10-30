@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   Pressable,
   ScrollView,
 } from 'react-native';
+import { useFocusEffect } from 'expo-router';
 import { Play as PlayIcon, RotateCcw, BookOpen, ChevronRight } from 'lucide-react-native';
 import { Colors } from '@/lib/theme';
 import { LoadingView, ErrorView, EmptyView, PrimaryButton } from '@/components/ui';
@@ -58,18 +59,20 @@ export default function PlayScreen() {
     }
   }, [storyId]);
 
-  useEffect(() => {
-    if (storyId) {
-      setLoading(true);
-      setHistory([]);
-      load();
-    } else {
-      setPassages([]);
-      setAllChoices([]);
-      setCurrentPassage(null);
-      setLoading(false);
-    }
-  }, [storyId, load]);
+  useFocusEffect(
+    useCallback(() => {
+      if (storyId) {
+        setLoading(true);
+        setHistory([]);
+        load();
+      } else {
+        setPassages([]);
+        setAllChoices([]);
+        setCurrentPassage(null);
+        setLoading(false);
+      }
+    }, [storyId, load]),
+  );
 
   const navigateTo = (passageId: string) => {
     const target = passages.find((p) => p.id === passageId);

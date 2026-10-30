@@ -110,6 +110,7 @@ export default function PlayScreen() {
   };
 
   if (!activeStory) {
+    if (loading) return <LoadingView message="Memuat cerita..." />;
     return (
       <EmptyView
         icon={<PlayIcon size={32} color={Colors.primary[500]} strokeWidth={2} />}

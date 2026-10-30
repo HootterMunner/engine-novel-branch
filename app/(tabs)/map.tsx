@@ -126,6 +126,7 @@ export default function MapScreen() {
   };
 
   if (!activeStory) {
+    if (loading) return <LoadingView message="Memuat cerita..." />;
     return (
       <EmptyView
         icon={<MapIcon size={32} color={Colors.primary[500]} strokeWidth={2} />}

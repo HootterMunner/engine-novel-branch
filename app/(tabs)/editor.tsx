@@ -55,6 +55,7 @@ export default function EditorScreen() {
 
   // choice editor state
   const [editingChoice, setEditingChoice] = useState<Choice | null>(null);
+  const [showChoiceForm, setShowChoiceForm] = useState(false);
   const [cText, setCText] = useState('');
   const [cTarget, setCTarget] = useState<string | null>(null);
 
@@ -181,12 +182,14 @@ export default function EditorScreen() {
     setEditingChoice(null);
     setCText('');
     setCTarget(null);
+    setShowChoiceForm(true);
   };
 
   const openEditChoice = (c: Choice) => {
     setEditingChoice(c);
     setCText(c.text);
     setCTarget(c.to_passage_id);
+    setShowChoiceForm(true);
   };
 
   const saveChoice = async () => {
@@ -211,6 +214,7 @@ export default function EditorScreen() {
       setEditingChoice(null);
       setCText('');
       setCTarget(null);
+      setShowChoiceForm(false);
     } catch (e) {
       Alert.alert('Gagal menyimpan pilihan', e instanceof Error ? e.message : undefined);
     }
@@ -365,7 +369,7 @@ export default function EditorScreen() {
               </Pressable>
             </View>
 
-            {editingChoice ? (
+            {showChoiceForm ? (
               <View style={styles.choiceEditForm}>
                 <Text style={styles.inputLabel}>Teks Pilihan</Text>
                 <TextInput
@@ -394,7 +398,7 @@ export default function EditorScreen() {
                 <View style={styles.modalActions}>
                   <Pressable
                     style={styles.modalCancel}
-                    onPress={() => { setEditingChoice(null); setCText(''); setCTarget(null); }}>
+                    onPress={() => { setEditingChoice(null); setCText(''); setCTarget(null); setShowChoiceForm(false); }}>
                     <Text style={styles.modalCancelText}>Kembali</Text>
                   </Pressable>
                   <PrimaryButton label="Simpan Pilihan" onPress={saveChoice} />

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -19,8 +19,8 @@ import {
   Star,
   Pencil,
   Link2,
-  FolderPlus,
-  X,
+  FolderInput,
+  Copy,
   MoreHorizontal,
 } from 'lucide-react-native';
 import { Colors } from '@/lib/theme';
@@ -59,6 +59,8 @@ export default function EditorScreen() {
   const [showChapterMenu, setShowChapterMenu] = useState(false);
   const [choicesFor, setChoicesFor] = useState<Passage | null>(null);
   const [choices, setChoices] = useState<Choice[]>([]);
+  const [movePassage, setMovePassage] = useState<Passage | null>(null);
+  const initialized = useRef(false);
 
   // passage editor state
   const [pTitle, setPTitle] = useState('');
@@ -81,13 +83,14 @@ export default function EditorScreen() {
     try {
       const data = await fetchChapters(activeStory.id);
       setChapters(data);
-      if (data.length > 0 && activeChapter === UNASSIGNED) {
+      if (!initialized.current && data.length > 0) {
         setActiveChapter(data[0].id);
       }
+      initialized.current = true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal memuat bab');
     }
-  }, [activeStory, activeChapter]);
+  }, [activeStory]);
 
   const loadPassages = useCallback(async () => {
     if (!activeStory) return;
@@ -112,6 +115,8 @@ export default function EditorScreen() {
       setChapters([]);
       setPassages([]);
       setLoading(false);
+      initialized.current = false;
+      setActiveChapter(UNASSIGNED);
     }
   }, [activeStory, loadChapters, loadPassages]);
 
@@ -279,6 +284,48 @@ export default function EditorScreen() {
       setPassages((prev) => prev.map((x) => ({ ...x, is_start: x.id === p.id })));
     } catch (e) {
       Alert.alert('Gagal', e instanceof Error ? e.message : undefined);
+    }
+  };
+
+  // --- Move / Copy passage ---
+
+  const handleMovePassage = async (p: Passage, targetChapter: string) => {
+    const newChapterId = targetChapter === UNASSIGNED ? null : targetChapter;
+    try {
+      await updatePassage(p.id, { chapter_id: newChapterId });
+      setPassages((prev) => prev.filter((x) => x.id !== p.id));
+      setMovePassage(null);
+      Alert.alert('Berhasil', 'Bagian telah dipindahkan.');
+    } catch (e) {
+      Alert.alert('Gagal memindahkan', e instanceof Error ? e.message : undefined);
+    }
+  };
+
+  const handleCopyPassage = async (p: Passage, targetChapter: string) => {
+    if (!activeStory) return;
+    const newChapterId = targetChapter === UNASSIGNED ? null : targetChapter;
+    try {
+      const offset = (passages.length + 1) * 60;
+      const created = await createPassage(
+        activeStory.id,
+        p.title,
+        p.content,
+        offset,
+        offset,
+        newChapterId,
+      );
+      // Also copy the choices
+      const passageChoices = await fetchChoices(p.id);
+      for (const c of passageChoices) {
+        await createChoice(created.id, c.text, c.to_passage_id, c.sort_order);
+      }
+      if (activeChapter === targetChapter || (activeChapter === UNASSIGNED && targetChapter === UNASSIGNED)) {
+        setPassages((prev) => [...prev, created]);
+      }
+      setMovePassage(null);
+      Alert.alert('Berhasil', 'Bagian telah disalin dengan pilihannya.');
+    } catch (e) {
+      Alert.alert('Gagal menyalin', e instanceof Error ? e.message : undefined);
     }
   };
 
@@ -476,10 +523,14 @@ export default function EditorScreen() {
                 <Link2 size={15} color={Colors.primary[600]} strokeWidth={2} />
                 <Text style={styles.passageActionText}>Pilihan</Text>
               </Pressable>
+              <Pressable style={styles.passageActionBtn} onPress={() => setMovePassage(item)}>
+                <FolderInput size={15} color={Colors.neutral[600]} strokeWidth={2} />
+                <Text style={styles.passageActionTextMuted}>Pindah/Salin</Text>
+              </Pressable>
               {!item.is_start && (
                 <Pressable style={styles.passageActionBtn} onPress={() => handleSetStart(item)}>
                   <Star size={15} color={Colors.neutral[400]} strokeWidth={2} />
-                  <Text style={styles.passageActionTextMuted}>Jadikan Awal</Text>
+                  <Text style={styles.passageActionTextMuted}>Awal</Text>
                 </Pressable>
               )}
               <Pressable
@@ -581,6 +632,91 @@ export default function EditorScreen() {
             })()}
           </View>
         </Pressable>
+      </Modal>
+
+      {/* Move/Copy Passage Modal */}
+      <Modal visible={movePassage !== null} animationType="slide" transparent onRequestClose={() => setMovePassage(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Pindah / Salin Bagian</Text>
+            <Text style={styles.moveSubtitle} numberOfLines={1}>{movePassage?.title}</Text>
+            <Text style={styles.inputLabel}>Pilih bab tujuan:</Text>
+            <ScrollView style={styles.moveList}>
+              <Pressable
+                style={[
+                  styles.targetItem,
+                  activeChapter === UNASSIGNED && styles.targetItemSelected,
+                ]}
+                onPress={() => {}}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.targetItemText}>Tanpa Bab</Text>
+                </View>
+                {activeChapter === UNASSIGNED && <View style={styles.targetCheck} />}
+              </Pressable>
+              {chapters
+                .filter((ch) => ch.id !== activeChapter)
+                .map((ch) => (
+                  <Pressable
+                    key={ch.id}
+                    style={styles.targetItem}
+                    onPress={() => {}}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.targetItemText} numberOfLines={1}>{ch.title}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+            </ScrollView>
+            <View style={styles.moveActions}>
+              <Pressable style={styles.modalCancel} onPress={() => setMovePassage(null)}>
+                <Text style={styles.modalCancelText}>Batal</Text>
+              </Pressable>
+              {chapters.length > 0 || activeChapter !== UNASSIGNED ? (
+                <>
+                  <SecondaryButton
+                    label="Salin"
+                    onPress={() => {
+                      Alert.alert(
+                        'Salin ke bab mana?',
+                        'Pilih bab tujuan untuk menyalin bagian ini.',
+                        [
+                          { text: 'Batal', style: 'cancel' },
+                          { text: 'Tanpa Bab', onPress: () => movePassage && handleCopyPassage(movePassage, UNASSIGNED) },
+                          ...chapters
+                            .filter((ch) => ch.id !== activeChapter)
+                            .map((ch) => ({
+                              text: ch.title,
+                              onPress: () => movePassage && handleCopyPassage(movePassage, ch.id),
+                            })),
+                        ],
+                      );
+                    }}
+                  />
+                  <PrimaryButton
+                    label="Pindahkan"
+                    onPress={() => {
+                      Alert.alert(
+                        'Pindahkan ke bab mana?',
+                        'Pilih bab tujuan. Bagian akan hilang dari bab ini.',
+                        [
+                          { text: 'Batal', style: 'cancel' },
+                          { text: 'Tanpa Bab', onPress: () => movePassage && handleMovePassage(movePassage, UNASSIGNED) },
+                          ...chapters
+                            .filter((ch) => ch.id !== activeChapter)
+                            .map((ch) => ({
+                              text: ch.title,
+                              onPress: () => movePassage && handleMovePassage(movePassage, ch.id),
+                            })),
+                        ],
+                      );
+                    }}
+                  />
+                </>
+              ) : (
+                <Text style={styles.moveHint}>Buat bab lain dulu untuk memindahkan/menyalin.</Text>
+              )}
+            </View>
+          </View>
+        </View>
       </Modal>
 
       {/* Choice Editor Modal */}
@@ -697,7 +833,6 @@ const styles = StyleSheet.create({
     color: Colors.neutral[400],
     marginTop: 4,
   },
-  // Chapter tab bar
   chapterBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -746,7 +881,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // List
   list: {
     padding: 16,
     paddingBottom: 100,
@@ -847,7 +981,6 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.neutral[100],
     borderTopWidth: 1,
   },
-  // Modals
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -903,7 +1036,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     color: Colors.neutral[500],
   },
-  // Chapter context menu
   menuOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -946,7 +1078,30 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     color: Colors.error[600],
   },
-  // Choice editor
+  moveSubtitle: {
+    fontSize: 13,
+    fontFamily: 'Inter-Regular',
+    color: Colors.neutral[400],
+    marginTop: 2,
+  },
+  moveList: {
+    maxHeight: 200,
+    marginTop: 8,
+  },
+  moveActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 24,
+    flexWrap: 'wrap',
+  },
+  moveHint: {
+    fontSize: 13,
+    fontFamily: 'Inter-Regular',
+    color: Colors.neutral[400],
+    flex: 1,
+  },
   choiceHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',

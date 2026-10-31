@@ -16,9 +16,10 @@ import { LoadingView, ErrorView, EmptyView } from '@/components/ui';
 import {
   fetchPassages,
   fetchAllChoices,
+  fetchChapters,
   deletePassage,
 } from '@/lib/db';
-import type { Passage, Choice } from '@/lib/types';
+import type { Passage, Choice, Chapter } from '@/lib/types';
 import { useStory } from '@/lib/story-context';
 
 const CARD_W = 140;
@@ -36,6 +37,7 @@ export default function MapScreen() {
   const { activeStory } = useStory();
   const [passages, setPassages] = useState<Passage[]>([]);
   const [choices, setChoices] = useState<Choice[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,12 +48,14 @@ export default function MapScreen() {
     if (!activeStory) return;
     try {
       setError(null);
-      const [pData, cData] = await Promise.all([
+      const [pData, cData, chData] = await Promise.all([
         fetchPassages(activeStory.id),
         fetchAllChoices(activeStory.id),
+        fetchChapters(activeStory.id),
       ]);
       setPassages(pData);
       setChoices(cData);
+      setChapters(chData);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal memuat peta');
     } finally {

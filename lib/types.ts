@@ -7,9 +7,19 @@ export interface Story {
   updated_at: string;
 }
 
+export interface Chapter {
+  id: string;
+  story_id: string;
+  title: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Passage {
   id: string;
   story_id: string;
+  chapter_id: string | null;
   title: string;
   content: string;
   position_x: number;
@@ -36,8 +46,9 @@ export interface StoryExport {
   version: string;
   exported_at: string;
   story: Pick<Story, 'title' | 'description' | 'author'>;
+  chapters: Array<Pick<Chapter, 'title' | 'sort_order'> & { id: string }>;
   passages: Array<
-    Pick<Passage, 'title' | 'content' | 'position_x' | 'position_y' | 'is_start'> & {
+    Pick<Passage, 'title' | 'content' | 'position_x' | 'position_y' | 'is_start' | 'chapter_id'> & {
       id: string;
       choices: Array<Pick<Choice, 'text' | 'sort_order'> & { to_passage_id: string | null }>;
     }

@@ -19,6 +19,9 @@ import {
   Star,
   Pencil,
   Link2,
+  FolderPlus,
+  X,
+  MoreHorizontal,
 } from 'lucide-react-native';
 import { Colors } from '@/lib/theme';
 import { LoadingView, ErrorView, EmptyView, PrimaryButton, SecondaryButton } from '@/components/ui';
@@ -32,19 +35,28 @@ import {
   updateChoice,
   deleteChoice,
   setStartPassage,
+  fetchChapters,
+  createChapter,
+  updateChapter,
+  deleteChapter,
 } from '@/lib/db';
-import type { Passage, Choice } from '@/lib/types';
+import type { Passage, Choice, Chapter } from '@/lib/types';
 import { useStory } from '@/lib/story-context';
+
+const UNASSIGNED = '__none__';
 
 export default function EditorScreen() {
   const { activeStory } = useStory();
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [activeChapter, setActiveChapter] = useState<string>(UNASSIGNED);
   const [passages, setPassages] = useState<Passage[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingPassage, setEditingPassage] = useState<Passage | null>(null);
   const [showPassageEditor, setShowPassageEditor] = useState(false);
-  const [showChoiceEditor, setShowChoiceEditor] = useState(false);
+  const [showChapterEditor, setShowChapterEditor] = useState(false);
+  const [showChapterMenu, setShowChapterMenu] = useState(false);
   const [choicesFor, setChoicesFor] = useState<Passage | null>(null);
   const [choices, setChoices] = useState<Choice[]>([]);
 
@@ -53,17 +65,36 @@ export default function EditorScreen() {
   const [pContent, setPContent] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // chapter editor state
+  const [editingChapter, setEditingChapter] = useState<Chapter | null>(null);
+  const [chTitle, setChTitle] = useState('');
+  const [chSaving, setChSaving] = useState(false);
+
   // choice editor state
   const [editingChoice, setEditingChoice] = useState<Choice | null>(null);
   const [showChoiceForm, setShowChoiceForm] = useState(false);
   const [cText, setCText] = useState('');
   const [cTarget, setCTarget] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const loadChapters = useCallback(async () => {
+    if (!activeStory) return;
+    try {
+      const data = await fetchChapters(activeStory.id);
+      setChapters(data);
+      if (data.length > 0 && activeChapter === UNASSIGNED) {
+        setActiveChapter(data[0].id);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Gagal memuat bab');
+    }
+  }, [activeStory, activeChapter]);
+
+  const loadPassages = useCallback(async () => {
     if (!activeStory) return;
     try {
       setError(null);
-      const data = await fetchPassages(activeStory.id);
+      const chapterId = activeChapter === UNASSIGNED ? null : activeChapter;
+      const data = await fetchPassages(activeStory.id, chapterId);
       setPassages(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal memuat bagian');
@@ -71,22 +102,97 @@ export default function EditorScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeStory]);
+  }, [activeStory, activeChapter]);
 
   useEffect(() => {
     if (activeStory) {
       setLoading(true);
-      load();
+      loadChapters().then(() => loadPassages());
     } else {
+      setChapters([]);
       setPassages([]);
       setLoading(false);
     }
-  }, [activeStory, load]);
+  }, [activeStory, loadChapters, loadPassages]);
 
   const onRefresh = () => {
     setRefreshing(true);
-    load();
+    loadChapters().then(() => loadPassages());
   };
+
+  // --- Chapter operations ---
+
+  const openNewChapter = () => {
+    setEditingChapter(null);
+    setChTitle('');
+    setShowChapterEditor(true);
+    setShowChapterMenu(false);
+  };
+
+  const openEditChapter = (ch: Chapter) => {
+    setEditingChapter(ch);
+    setChTitle(ch.title);
+    setShowChapterEditor(true);
+    setShowChapterMenu(false);
+  };
+
+  const saveChapter = async () => {
+    if (!activeStory) return;
+    if (!chTitle.trim()) {
+      Alert.alert('Judul bab wajib diisi');
+      return;
+    }
+    setChSaving(true);
+    try {
+      if (editingChapter) {
+        await updateChapter(editingChapter.id, { title: chTitle.trim() });
+        setChapters((prev) =>
+          prev.map((ch) =>
+            ch.id === editingChapter.id ? { ...ch, title: chTitle.trim() } : ch,
+          ),
+        );
+      } else {
+        const sortOrder = chapters.length;
+        const created = await createChapter(activeStory.id, chTitle.trim(), sortOrder);
+        setChapters((prev) => [...prev, created]);
+        setActiveChapter(created.id);
+      }
+      setShowChapterEditor(false);
+    } catch (e) {
+      Alert.alert('Gagal menyimpan bab', e instanceof Error ? e.message : undefined);
+    } finally {
+      setChSaving(false);
+    }
+  };
+
+  const handleDeleteChapter = (ch: Chapter) => {
+    Alert.alert(
+      'Hapus bab?',
+      `"${ch.title}" akan dihapus. Bagian di dalamnya tidak terhapus, tapi menjadi tanpa bab.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteChapter(ch.id);
+              setChapters((prev) => prev.filter((x) => x.id !== ch.id));
+              if (activeChapter === ch.id) {
+                const remaining = chapters.filter((x) => x.id !== ch.id);
+                setActiveChapter(remaining.length > 0 ? remaining[0].id : UNASSIGNED);
+              }
+              setShowChapterMenu(false);
+            } catch (e) {
+              Alert.alert('Gagal menghapus', e instanceof Error ? e.message : undefined);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // --- Passage operations ---
 
   const openNewPassage = () => {
     setEditingPassage(null);
@@ -110,6 +216,7 @@ export default function EditorScreen() {
     }
     setSaving(true);
     try {
+      const chapterId = activeChapter === UNASSIGNED ? null : activeChapter;
       if (editingPassage) {
         await updatePassage(editingPassage.id, { title: pTitle.trim(), content: pContent });
         setPassages((prev) =>
@@ -119,11 +226,20 @@ export default function EditorScreen() {
         );
       } else {
         const offset = passages.length * 60;
-        const created = await createPassage(activeStory.id, pTitle.trim(), pContent, offset, offset);
+        const created = await createPassage(
+          activeStory.id,
+          pTitle.trim(),
+          pContent,
+          offset,
+          offset,
+          chapterId,
+        );
         setPassages((prev) => [...prev, created]);
-        if (passages.length === 0) {
+        if (passages.length === 0 && activeChapter === UNASSIGNED) {
           await setStartPassage(activeStory.id, created.id);
-          setPassages((prev) => prev.map((p) => (p.id === created.id ? { ...p, is_start: true } : p)));
+          setPassages((prev) =>
+            prev.map((p) => (p.id === created.id ? { ...p, is_start: true } : p)),
+          );
         }
       }
       setShowPassageEditor(false);
@@ -166,6 +282,8 @@ export default function EditorScreen() {
     }
   };
 
+  // --- Choice operations ---
+
   const openChoices = async (p: Passage) => {
     setChoicesFor(p);
     setShowPassageEditor(false);
@@ -175,7 +293,6 @@ export default function EditorScreen() {
     } catch (e) {
       Alert.alert('Gagal memuat pilihan', e instanceof Error ? e.message : undefined);
     }
-    setShowChoiceEditor(true);
   };
 
   const openNewChoice = () => {
@@ -238,6 +355,8 @@ export default function EditorScreen() {
     ]);
   };
 
+  // --- Render guards ---
+
   if (!activeStory) {
     if (loading) return <LoadingView message="Memuat cerita..." />;
     return (
@@ -259,6 +378,59 @@ export default function EditorScreen() {
         <Text style={styles.headerSubtitle} numberOfLines={1}>{activeStory.title}</Text>
       </View>
 
+      {/* Chapter tabs bar */}
+      <View style={styles.chapterBar}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chapterTabs}>
+          <Pressable
+            style={[
+              styles.chapterTab,
+              activeChapter === UNASSIGNED && styles.chapterTabActive,
+            ]}
+            onPress={() => setActiveChapter(UNASSIGNED)}>
+            <Text
+              style={[
+                styles.chapterTabText,
+                activeChapter === UNASSIGNED && styles.chapterTabTextActive,
+              ]}>
+              Tanpa Bab
+            </Text>
+          </Pressable>
+          {chapters.map((ch) => (
+            <Pressable
+              key={ch.id}
+              style={[
+                styles.chapterTab,
+                activeChapter === ch.id && styles.chapterTabActive,
+              ]}
+              onPress={() => setActiveChapter(ch.id)}>
+              <Text
+                style={[
+                  styles.chapterTabText,
+                  activeChapter === ch.id && styles.chapterTabTextActive,
+                ]}
+                numberOfLines={1}>
+                {ch.title}
+              </Text>
+            </Pressable>
+          ))}
+          <Pressable style={styles.chapterAddBtn} onPress={openNewChapter}>
+            <Plus size={18} color={Colors.primary[600]} strokeWidth={2.5} />
+          </Pressable>
+        </ScrollView>
+        {activeChapter !== UNASSIGNED && (
+          <Pressable
+            style={styles.chapterMenuBtn}
+            onPress={() => setShowChapterMenu(true)}
+            hitSlop={8}>
+            <MoreHorizontal size={18} color={Colors.neutral[400]} strokeWidth={2} />
+          </Pressable>
+        )}
+      </View>
+
+      {/* Passage list for active chapter */}
       <FlatList
         data={passages}
         keyExtractor={(item) => item.id}
@@ -268,7 +440,11 @@ export default function EditorScreen() {
           <EmptyView
             icon={<FileText size={32} color={Colors.primary[500]} strokeWidth={2} />}
             title="Belum ada bagian"
-            subtitle="Buat bagian pertama untuk mulai menulis cerita bercabang."
+            subtitle={
+              activeChapter === UNASSIGNED
+                ? 'Buat bagian pertama di bab ini atau buat bab baru untuk mulai menulis.'
+                : 'Buat bagian pertama di bab ini untuk mulai menulis cerita bercabang.'
+            }
             action={<PrimaryButton label="Buat Bagian" onPress={openNewPassage} />}
           />
         }
@@ -356,8 +532,59 @@ export default function EditorScreen() {
         </View>
       </Modal>
 
+      {/* Chapter Editor Modal */}
+      <Modal visible={showChapterEditor} animationType="slide" transparent onRequestClose={() => setShowChapterEditor(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>{editingChapter ? 'Edit Bab' : 'Bab Baru'}</Text>
+            <Text style={styles.inputLabel}>Judul Bab</Text>
+            <TextInput
+              style={styles.input}
+              value={chTitle}
+              onChangeText={setChTitle}
+              placeholder="Contoh: Bab 1 — Awal Mula"
+              placeholderTextColor={Colors.neutral[300]}
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancel} onPress={() => setShowChapterEditor(false)}>
+                <Text style={styles.modalCancelText}>Batal</Text>
+              </Pressable>
+              <PrimaryButton label={chSaving ? 'Menyimpan...' : 'Simpan'} onPress={saveChapter} disabled={chSaving} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Chapter Context Menu */}
+      <Modal visible={showChapterMenu} animationType="fade" transparent onRequestClose={() => setShowChapterMenu(false)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setShowChapterMenu(false)}>
+          <View style={styles.menuSheet}>
+            {(() => {
+              const ch = chapters.find((x) => x.id === activeChapter);
+              if (!ch) return null;
+              return (
+                <>
+                  <Text style={styles.menuTitle} numberOfLines={1}>{ch.title}</Text>
+                  <Pressable style={styles.menuItem} onPress={() => openEditChapter(ch)}>
+                    <Pencil size={18} color={Colors.neutral[700]} strokeWidth={2} />
+                    <Text style={styles.menuItemText}>Ganti Nama Bab</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.menuItem, styles.menuItemDanger]}
+                    onPress={() => handleDeleteChapter(ch)}>
+                    <Trash2 size={18} color={Colors.error[600]} strokeWidth={2} />
+                    <Text style={styles.menuItemTextDanger}>Hapus Bab</Text>
+                  </Pressable>
+                </>
+              );
+            })()}
+          </View>
+        </Pressable>
+      </Modal>
+
       {/* Choice Editor Modal */}
-      <Modal visible={showChoiceEditor} animationType="slide" transparent onRequestClose={() => setShowChoiceEditor(false)}>
+      <Modal visible={choicesFor !== null} animationType="slide" transparent onRequestClose={() => setChoicesFor(null)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.choiceHeader}>
@@ -365,7 +592,7 @@ export default function EditorScreen() {
                 <Text style={styles.modalTitle}>Pilihan Cerita</Text>
                 <Text style={styles.choiceSubtitle} numberOfLines={1}>Dari: {choicesFor?.title}</Text>
               </View>
-              <Pressable style={styles.closeBtn} onPress={() => setShowChoiceEditor(false)}>
+              <Pressable style={styles.closeBtn} onPress={() => setChoicesFor(null)}>
                 <Text style={styles.closeBtnText}>Tutup</Text>
               </Pressable>
             </View>
@@ -470,6 +697,56 @@ const styles = StyleSheet.create({
     color: Colors.neutral[400],
     marginTop: 4,
   },
+  // Chapter tab bar
+  chapterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.neutral[0],
+    borderBottomColor: Colors.neutral[100],
+    borderBottomWidth: 1,
+    paddingRight: 8,
+  },
+  chapterTabs: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  chapterTab: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: Colors.neutral[100],
+    maxWidth: 160,
+  },
+  chapterTabActive: {
+    backgroundColor: Colors.primary[600],
+  },
+  chapterTabText: {
+    fontSize: 13,
+    fontFamily: 'Inter-Medium',
+    color: Colors.neutral[600],
+  },
+  chapterTabTextActive: {
+    color: Colors.neutral[0],
+    fontFamily: 'Inter-Bold',
+  },
+  chapterAddBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: Colors.primary[50],
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chapterMenuBtn: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // List
   list: {
     padding: 16,
     paddingBottom: 100,
@@ -570,6 +847,7 @@ const styles = StyleSheet.create({
     borderTopColor: Colors.neutral[100],
     borderTopWidth: 1,
   },
+  // Modals
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -624,6 +902,49 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: 'Inter-Medium',
     color: Colors.neutral[500],
+  },
+  // Chapter context menu
+  menuOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  menuSheet: {
+    backgroundColor: Colors.neutral[0],
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    paddingBottom: 36,
+  },
+  menuTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter-Bold',
+    color: Colors.neutral[900],
+    marginBottom: 16,
+    paddingBottom: 16,
+    borderBottomColor: Colors.neutral[100],
+    borderBottomWidth: 1,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingVertical: 14,
+  },
+  menuItemText: {
+    fontSize: 15,
+    fontFamily: 'Inter-Medium',
+    color: Colors.neutral[700],
+  },
+  menuItemDanger: {
+    borderTopColor: Colors.neutral[100],
+    borderTopWidth: 1,
+    marginTop: 4,
+  },
+  menuItemTextDanger: {
+    fontSize: 15,
+    fontFamily: 'Inter-Medium',
+    color: Colors.error[600],
   },
   // Choice editor
   choiceHeader: {

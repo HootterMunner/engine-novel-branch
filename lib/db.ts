@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Story, Passage, Choice, StoryExport } from './types';
+import type { Story, Chapter, Passage, Choice, StoryExport } from './types';
 
 function mapError(error: unknown): string {
   if (error && typeof error === 'object' && 'message' in error) {
@@ -59,14 +59,64 @@ export async function deleteStory(id: string): Promise<void> {
   if (error) throw new Error(mapError(error));
 }
 
+// ---------- Chapters ----------
+
+export async function fetchChapters(storyId: string): Promise<Chapter[]> {
+  const { data, error } = await supabase
+    .from('chapters')
+    .select('*')
+    .eq('story_id', storyId)
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(mapError(error));
+  return data ?? [];
+}
+
+export async function createChapter(
+  storyId: string,
+  title: string,
+  sortOrder = 0,
+): Promise<Chapter> {
+  const { data, error } = await supabase
+    .from('chapters')
+    .insert({ story_id: storyId, title, sort_order: sortOrder })
+    .select()
+    .single();
+  if (error) throw new Error(mapError(error));
+  return data;
+}
+
+export async function updateChapter(
+  id: string,
+  patch: Partial<Pick<Chapter, 'title' | 'sort_order'>>,
+): Promise<void> {
+  const { error } = await supabase
+    .from('chapters')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(mapError(error));
+}
+
+export async function deleteChapter(id: string): Promise<void> {
+  const { error } = await supabase.from('chapters').delete().eq('id', id);
+  if (error) throw new Error(mapError(error));
+}
+
 // ---------- Passages ----------
 
-export async function fetchPassages(storyId: string): Promise<Passage[]> {
-  const { data, error } = await supabase
+export async function fetchPassages(storyId: string, chapterId?: string | null): Promise<Passage[]> {
+  let query = supabase
     .from('passages')
     .select('*')
     .eq('story_id', storyId)
     .order('created_at', { ascending: true });
+  if (chapterId !== undefined) {
+    if (chapterId === null) {
+      query = query.is('chapter_id', null);
+    } else {
+      query = query.eq('chapter_id', chapterId);
+    }
+  }
+  const { data, error } = await query;
   if (error) throw new Error(mapError(error));
   return data ?? [];
 }
@@ -87,11 +137,13 @@ export async function createPassage(
   content = '',
   positionX = 0,
   positionY = 0,
+  chapterId: string | null = null,
 ): Promise<Passage> {
   const { data, error } = await supabase
     .from('passages')
     .insert({
       story_id: storyId,
+      chapter_id: chapterId,
       title,
       content,
       position_x: positionX,
@@ -106,7 +158,7 @@ export async function createPassage(
 export async function updatePassage(
   id: string,
   patch: Partial<
-    Pick<Passage, 'title' | 'content' | 'position_x' | 'position_y' | 'is_start'>
+    Pick<Passage, 'title' | 'content' | 'position_x' | 'position_y' | 'is_start' | 'chapter_id'>
   >,
 ): Promise<void> {
   const { error } = await supabase
@@ -212,16 +264,21 @@ export async function exportStory(storyId: string): Promise<StoryExport> {
   const story = await fetchStory(storyId);
   if (!story) throw new Error('Cerita tidak ditemukan');
 
-  const passages = await fetchPassages(storyId);
-  const choices = await fetchAllChoices(storyId);
-
-  const passageMap = new Map<string, number>();
-  passages.forEach((p, i) => passageMap.set(p.id, i));
+  const [passages, choices, chapters] = await Promise.all([
+    fetchPassages(storyId),
+    fetchAllChoices(storyId),
+    fetchChapters(storyId),
+  ]);
 
   return {
-    version: '1.0',
+    version: '1.1',
     exported_at: new Date().toISOString(),
     story: { title: story.title, description: story.description, author: story.author },
+    chapters: chapters.map((ch) => ({
+      id: ch.id,
+      title: ch.title,
+      sort_order: ch.sort_order,
+    })),
     passages: passages.map((p) => ({
       id: p.id,
       title: p.title,
@@ -229,6 +286,7 @@ export async function exportStory(storyId: string): Promise<StoryExport> {
       position_x: p.position_x,
       position_y: p.position_y,
       is_start: p.is_start,
+      chapter_id: p.chapter_id,
       choices: choices
         .filter((c) => c.from_passage_id === p.id)
         .map((c) => ({
@@ -247,27 +305,38 @@ export async function importStory(json: StoryExport): Promise<Story> {
     json.story.author || '',
   );
 
-  const oldToNew = new Map<string, string>();
+  const oldToNewPassage = new Map<string, string>();
+  const oldToNewChapter = new Map<string, string>();
+
+  // Import chapters
+  if (json.chapters) {
+    for (const ch of json.chapters) {
+      const createdCh = await createChapter(story.id, ch.title, ch.sort_order);
+      oldToNewChapter.set(ch.id, createdCh.id);
+    }
+  }
 
   for (const p of json.passages) {
+    const newChapterId = p.chapter_id ? oldToNewChapter.get(p.chapter_id) ?? null : null;
     const created = await createPassage(
       story.id,
       p.title,
       p.content,
       p.position_x,
       p.position_y,
+      newChapterId,
     );
-    oldToNew.set(p.id, created.id);
+    oldToNewPassage.set(p.id, created.id);
     if (p.is_start) {
       await setStartPassage(story.id, created.id);
     }
   }
 
   for (const p of json.passages) {
-    const newFromId = oldToNew.get(p.id);
+    const newFromId = oldToNewPassage.get(p.id);
     if (!newFromId) continue;
     for (const c of p.choices) {
-      const newToId = c.to_passage_id ? oldToNew.get(c.to_passage_id) ?? null : null;
+      const newToId = c.to_passage_id ? oldToNewPassage.get(c.to_passage_id) ?? null : null;
       await createChoice(newFromId, c.text, newToId, c.sort_order);
     }
   }

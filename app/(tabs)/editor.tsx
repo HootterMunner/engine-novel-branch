@@ -476,6 +476,35 @@ export default function EditorScreen() {
     }
   };
 
+  const getPassageLocationLabel = (p: Passage): string => {
+    if (!p.chapter_id) return 'Tanpa Bab';
+    const ch = chapters.find((c) => c.id === p.chapter_id);
+    if (!ch) return 'Tanpa Bab';
+    if (p.subchapter_id) {
+      const sc = subChapters.find((s) => s.id === p.subchapter_id);
+      return sc ? `${ch.title} > ${sc.title}` : ch.title;
+    }
+    return ch.title;
+  };
+
+  const getSameChapterPassages = (p: Passage): Passage[] => {
+    if (!p.chapter_id) return unassignedPassages;
+    return allPassages.filter((x) => x.chapter_id === p.chapter_id && x.id !== p.id);
+  };
+
+  const handleAutoLink = async () => {
+    if (!choicesFor) return;
+    const candidates = getSameChapterPassages(choicesFor);
+    if (candidates.length === 0) return;
+    const target = candidates[0];
+    try {
+      const created = await createChoice(choicesFor.id, `Lanjut ke: ${target.title}`, target.id, choices.length);
+      setChoices((prev) => [...prev, created]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Gagal membuat tautan');
+    }
+  };
+
   // --- Choice operations ---
 
   const openChoices = async (p: Passage) => {
@@ -998,20 +1027,76 @@ export default function EditorScreen() {
                 <Text style={styles.inputLabel}>Teks Pilihan</Text>
                 <TextInput style={styles.input} value={cText} onChangeText={setCText} placeholder="Contoh: Buka pintu itu" placeholderTextColor={Colors.neutral[300]} />
                 <Text style={styles.inputLabel}>Tujuan</Text>
-                <ScrollView>
-                  {allPassages
-                    .filter((p) => p.id !== choicesFor?.id)
-                    .map((p) => (
-                      <Pressable
-                        key={p.id}
-                        style={[styles.targetItem, cTarget === p.id && styles.targetItemSelected]}
-                        onPress={() => setCTarget(p.id)}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.targetItemText} numberOfLines={1}>{p.title}</Text>
+                <ScrollView style={styles.targetScroll}>
+                  {/* Same chapter first */}
+                  {(() => {
+                    const sameCh = getSameChapterPassages(choicesFor!);
+                    if (sameCh.length === 0) return null;
+                    return (
+                      <View style={styles.targetGroup}>
+                        <Text style={styles.targetGroupLabel}>Bab ini</Text>
+                        {sameCh.map((p) => (
+                          <Pressable
+                            key={p.id}
+                            style={[styles.targetItem, cTarget === p.id && styles.targetItemSelected]}
+                            onPress={() => setCTarget(p.id)}>
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.targetItemText} numberOfLines={1}>{p.title}</Text>
+                              {p.subchapter_id && (() => {
+                                const sc = subChapters.find((s) => s.id === p.subchapter_id);
+                                return sc ? <Text style={styles.targetSubLabel} numberOfLines={1}>{sc.title}</Text> : null;
+                              })()}
+                            </View>
+                            {cTarget === p.id && <View style={styles.targetCheck} />}
+                          </Pressable>
+                        ))}
+                      </View>
+                    );
+                  })()}
+                  {/* Other chapters */}
+                  {chapters
+                    .filter((ch) => ch.id !== choicesFor?.chapter_id)
+                    .map((ch) => {
+                      const chPas = allPassages.filter((p) => p.chapter_id === ch.id && p.id !== choicesFor?.id);
+                      if (chPas.length === 0) return null;
+                      return (
+                        <View key={ch.id} style={styles.targetGroup}>
+                          <Text style={styles.targetGroupLabel}>{ch.title}</Text>
+                          {chPas.map((p) => (
+                            <Pressable
+                              key={p.id}
+                              style={[styles.targetItem, cTarget === p.id && styles.targetItemSelected]}
+                              onPress={() => setCTarget(p.id)}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.targetItemText} numberOfLines={1}>{p.title}</Text>
+                                {p.subchapter_id && (() => {
+                                  const sc = subChapters.find((s) => s.id === p.subchapter_id);
+                                  return sc ? <Text style={styles.targetSubLabel} numberOfLines={1}>{sc.title}</Text> : null;
+                                })()}
+                              </View>
+                              {cTarget === p.id && <View style={styles.targetCheck} />}
+                            </Pressable>
+                          ))}
                         </View>
-                        {cTarget === p.id && <View style={styles.targetCheck} />}
-                      </Pressable>
-                    ))}
+                      );
+                    })}
+                  {/* Unassigned if source is not unassigned */}
+                  {choicesFor?.chapter_id !== null && unassignedPassages.filter((p) => p.id !== choicesFor?.id).length > 0 && (
+                    <View style={styles.targetGroup}>
+                      <Text style={styles.targetGroupLabel}>Tanpa Bab</Text>
+                      {unassignedPassages.filter((p) => p.id !== choicesFor?.id).map((p) => (
+                        <Pressable
+                          key={p.id}
+                          style={[styles.targetItem, cTarget === p.id && styles.targetItemSelected]}
+                          onPress={() => setCTarget(p.id)}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.targetItemText} numberOfLines={1}>{p.title}</Text>
+                          </View>
+                          {cTarget === p.id && <View style={styles.targetCheck} />}
+                        </Pressable>
+                      ))}
+                    </View>
+                  )}
                 </ScrollView>
                 <View style={styles.modalActions}>
                   <Pressable style={styles.modalCancel} onPress={() => { setEditingChoice(null); setCText(''); setCTarget(null); setShowChoiceForm(false); }}>
@@ -1037,6 +1122,11 @@ export default function EditorScreen() {
                             <Text style={styles.choiceTarget} numberOfLines={1}>
                               {target ? `→ ${target.title}` : '→ ujung buntu'}
                             </Text>
+                            {target && (
+                              <Text style={styles.choiceLocLabel} numberOfLines={1}>
+                                {getPassageLocationLabel(target)}
+                              </Text>
+                            )}
                           </Pressable>
                           <Pressable hitSlop={12} onPress={() => handleDeleteChoice(item)} style={styles.choiceDelete}>
                             <Trash2 size={16} color={Colors.error[500]} strokeWidth={2} />
@@ -1046,7 +1136,13 @@ export default function EditorScreen() {
                     })
                   )}
                 </ScrollView>
-                <View style={{ marginTop: 16 }}>
+                <View style={styles.choiceActionsRow}>
+                  {getSameChapterPassages(choicesFor!).length > 0 && (
+                    <Pressable style={styles.autoLinkBtn} onPress={handleAutoLink}>
+                      <Link2 size={14} color={Colors.primary[600]} strokeWidth={2} />
+                      <Text style={styles.autoLinkText}>Taut Otomatis</Text>
+                    </Pressable>
+                  )}
                   <SecondaryButton label="Tambah Pilihan" onPress={openNewChoice} />
                 </View>
               </View>
@@ -1238,6 +1334,27 @@ const styles = StyleSheet.create({
   choiceDelete: { padding: 6 },
   choiceEmpty: { paddingVertical: 24, alignItems: 'center' },
   choiceEmptyText: { fontSize: 14, fontFamily: 'Inter-Regular', color: Colors.neutral[400] },
+  // Target picker groups
+  targetScroll: { maxHeight: 280 },
+  targetGroup: { marginBottom: 12 },
+  targetGroupLabel: {
+    fontSize: 12, fontFamily: 'Inter-Bold', color: Colors.neutral[500],
+    marginBottom: 6, paddingHorizontal: 2,
+  },
+  targetSubLabel: {
+    fontSize: 11, fontFamily: 'Inter-Regular', color: Colors.neutral[400], marginTop: 2,
+  },
+  // Choice list extras
+  choiceLocLabel: {
+    fontSize: 11, fontFamily: 'Inter-Regular', color: Colors.primary[500], marginTop: 2,
+  },
+  choiceActionsRow: { flexDirection: 'row', gap: 8, marginTop: 16, alignItems: 'center' },
+  autoLinkBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 12, paddingHorizontal: 16, borderRadius: 14,
+    backgroundColor: Colors.primary[50],
+  },
+  autoLinkText: { fontSize: 13, fontFamily: 'Inter-Medium', color: Colors.primary[600] },
   // Confirm dialog
   confirmSheet: {
     backgroundColor: Colors.neutral[0], borderTopLeftRadius: 24, borderTopRightRadius: 24,

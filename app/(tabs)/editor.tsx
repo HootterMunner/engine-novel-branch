@@ -60,6 +60,7 @@ export default function EditorScreen() {
   const [choicesFor, setChoicesFor] = useState<Passage | null>(null);
   const [choices, setChoices] = useState<Choice[]>([]);
   const [movePassage, setMovePassage] = useState<Passage | null>(null);
+  const [moveTarget, setMoveTarget] = useState<string>(UNASSIGNED);
   const initialized = useRef(false);
 
   // passage editor state
@@ -289,41 +290,44 @@ export default function EditorScreen() {
 
   // --- Move / Copy passage ---
 
-  const handleMovePassage = async (p: Passage, targetChapter: string) => {
-    const newChapterId = targetChapter === UNASSIGNED ? null : targetChapter;
+  const openMovePassage = (p: Passage) => {
+    setMovePassage(p);
+    setMoveTarget(UNASSIGNED);
+  };
+
+  const handleMovePassage = async () => {
+    if (!movePassage) return;
+    const newChapterId = moveTarget === UNASSIGNED ? null : moveTarget;
     try {
-      await updatePassage(p.id, { chapter_id: newChapterId });
-      setPassages((prev) => prev.filter((x) => x.id !== p.id));
+      await updatePassage(movePassage.id, { chapter_id: newChapterId });
+      setPassages((prev) => prev.filter((x) => x.id !== movePassage.id));
       setMovePassage(null);
-      Alert.alert('Berhasil', 'Bagian telah dipindahkan.');
     } catch (e) {
       Alert.alert('Gagal memindahkan', e instanceof Error ? e.message : undefined);
     }
   };
 
-  const handleCopyPassage = async (p: Passage, targetChapter: string) => {
-    if (!activeStory) return;
-    const newChapterId = targetChapter === UNASSIGNED ? null : targetChapter;
+  const handleCopyPassage = async () => {
+    if (!movePassage || !activeStory) return;
+    const newChapterId = moveTarget === UNASSIGNED ? null : moveTarget;
     try {
       const offset = (passages.length + 1) * 60;
       const created = await createPassage(
         activeStory.id,
-        p.title,
-        p.content,
+        movePassage.title,
+        movePassage.content,
         offset,
         offset,
         newChapterId,
       );
-      // Also copy the choices
-      const passageChoices = await fetchChoices(p.id);
+      const passageChoices = await fetchChoices(movePassage.id);
       for (const c of passageChoices) {
         await createChoice(created.id, c.text, c.to_passage_id, c.sort_order);
       }
-      if (activeChapter === targetChapter || (activeChapter === UNASSIGNED && targetChapter === UNASSIGNED)) {
+      if (moveTarget === activeChapter || (moveTarget === UNASSIGNED && activeChapter === UNASSIGNED)) {
         setPassages((prev) => [...prev, created]);
       }
       setMovePassage(null);
-      Alert.alert('Berhasil', 'Bagian telah disalin dengan pilihannya.');
     } catch (e) {
       Alert.alert('Gagal menyalin', e instanceof Error ? e.message : undefined);
     }
@@ -523,7 +527,7 @@ export default function EditorScreen() {
                 <Link2 size={15} color={Colors.primary[600]} strokeWidth={2} />
                 <Text style={styles.passageActionText}>Pilihan</Text>
               </Pressable>
-              <Pressable style={styles.passageActionBtn} onPress={() => setMovePassage(item)}>
+              <Pressable style={styles.passageActionBtn} onPress={() => openMovePassage(item)}>
                 <FolderInput size={15} color={Colors.neutral[600]} strokeWidth={2} />
                 <Text style={styles.passageActionTextMuted}>Pindah/Salin</Text>
               </Pressable>
@@ -642,78 +646,39 @@ export default function EditorScreen() {
             <Text style={styles.moveSubtitle} numberOfLines={1}>{movePassage?.title}</Text>
             <Text style={styles.inputLabel}>Pilih bab tujuan:</Text>
             <ScrollView style={styles.moveList}>
-              <Pressable
-                style={[
-                  styles.targetItem,
-                  activeChapter === UNASSIGNED && styles.targetItemSelected,
-                ]}
-                onPress={() => {}}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.targetItemText}>Tanpa Bab</Text>
-                </View>
-                {activeChapter === UNASSIGNED && <View style={styles.targetCheck} />}
-              </Pressable>
+              {activeChapter !== UNASSIGNED && (
+                <Pressable
+                  style={[styles.targetItem, moveTarget === UNASSIGNED && styles.targetItemSelected]}
+                  onPress={() => setMoveTarget(UNASSIGNED)}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.targetItemText}>Tanpa Bab</Text>
+                  </View>
+                  {moveTarget === UNASSIGNED && <View style={styles.targetCheck} />}
+                </Pressable>
+              )}
               {chapters
                 .filter((ch) => ch.id !== activeChapter)
                 .map((ch) => (
                   <Pressable
                     key={ch.id}
-                    style={styles.targetItem}
-                    onPress={() => {}}>
+                    style={[styles.targetItem, moveTarget === ch.id && styles.targetItemSelected]}
+                    onPress={() => setMoveTarget(ch.id)}>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.targetItemText} numberOfLines={1}>{ch.title}</Text>
                     </View>
+                    {moveTarget === ch.id && <View style={styles.targetCheck} />}
                   </Pressable>
                 ))}
+              {chapters.length === 0 && activeChapter === UNASSIGNED && (
+                <Text style={styles.moveHint}>Buat bab lain dulu untuk memindahkan/menyalin.</Text>
+              )}
             </ScrollView>
             <View style={styles.moveActions}>
               <Pressable style={styles.modalCancel} onPress={() => setMovePassage(null)}>
                 <Text style={styles.modalCancelText}>Batal</Text>
               </Pressable>
-              {chapters.length > 0 || activeChapter !== UNASSIGNED ? (
-                <>
-                  <SecondaryButton
-                    label="Salin"
-                    onPress={() => {
-                      Alert.alert(
-                        'Salin ke bab mana?',
-                        'Pilih bab tujuan untuk menyalin bagian ini.',
-                        [
-                          { text: 'Batal', style: 'cancel' },
-                          { text: 'Tanpa Bab', onPress: () => movePassage && handleCopyPassage(movePassage, UNASSIGNED) },
-                          ...chapters
-                            .filter((ch) => ch.id !== activeChapter)
-                            .map((ch) => ({
-                              text: ch.title,
-                              onPress: () => movePassage && handleCopyPassage(movePassage, ch.id),
-                            })),
-                        ],
-                      );
-                    }}
-                  />
-                  <PrimaryButton
-                    label="Pindahkan"
-                    onPress={() => {
-                      Alert.alert(
-                        'Pindahkan ke bab mana?',
-                        'Pilih bab tujuan. Bagian akan hilang dari bab ini.',
-                        [
-                          { text: 'Batal', style: 'cancel' },
-                          { text: 'Tanpa Bab', onPress: () => movePassage && handleMovePassage(movePassage, UNASSIGNED) },
-                          ...chapters
-                            .filter((ch) => ch.id !== activeChapter)
-                            .map((ch) => ({
-                              text: ch.title,
-                              onPress: () => movePassage && handleMovePassage(movePassage, ch.id),
-                            })),
-                        ],
-                      );
-                    }}
-                  />
-                </>
-              ) : (
-                <Text style={styles.moveHint}>Buat bab lain dulu untuk memindahkan/menyalin.</Text>
-              )}
+              <SecondaryButton label="Salin ke Bab" onPress={handleCopyPassage} />
+              <PrimaryButton label="Pindahkan" onPress={handleMovePassage} />
             </View>
           </View>
         </View>

@@ -7,7 +7,6 @@ import {
   Pressable,
   Modal,
   TextInput,
-  Alert,
   RefreshControl,
 } from 'react-native';
 import {
@@ -59,6 +58,7 @@ export default function EditorScreen() {
   const [choices, setChoices] = useState<Choice[]>([]);
   const [movePassage, setMovePassage] = useState<Passage | null>(null);
   const [moveTarget, setMoveTarget] = useState<string>(UNASSIGNED);
+  const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const initialized = useRef(false);
   const creatingInChapter = useRef<string>(UNASSIGNED);
 
@@ -152,7 +152,7 @@ export default function EditorScreen() {
   const saveChapter = async () => {
     if (!activeStory) return;
     if (!chTitle.trim()) {
-      Alert.alert('Judul bab wajib diisi');
+      setError('Judul bab wajib diisi');
       return;
     }
     setChSaving(true);
@@ -172,68 +172,54 @@ export default function EditorScreen() {
       }
       setShowChapterEditor(false);
     } catch (e) {
-      Alert.alert('Gagal menyimpan bab', e instanceof Error ? e.message : undefined);
+      setError(e instanceof Error ? e.message : 'Gagal menyimpan bab');
     } finally {
       setChSaving(false);
     }
   };
 
   const handleDeleteChapter = (ch: Chapter) => {
-    Alert.alert(
-      'Hapus bab?',
-      `"${ch.title}" akan dihapus. Bagian di dalamnya tidak terhapus, tapi menjadi tanpa bab.`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Hapus',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteChapter(ch.id);
-              setChapters((prev) => prev.filter((x) => x.id !== ch.id));
-              setAllPassages((prev) =>
-                prev.map((p) => (p.chapter_id === ch.id ? { ...p, chapter_id: null } : p)),
-              );
-              setExpanded((prev) => {
-                const next = new Set(prev);
-                next.delete(ch.id);
-                next.add(UNASSIGNED);
-                return next;
-              });
-              setMenuChapterId(null);
-            } catch (e) {
-              Alert.alert('Gagal menghapus', e instanceof Error ? e.message : undefined);
-            }
-          },
-        },
-      ],
-    );
+    setConfirmDialog({
+      title: 'Hapus bab?',
+      message: `"${ch.title}" akan dihapus. Bagian di dalamnya tidak terhapus, tapi menjadi tanpa bab.`,
+      onConfirm: async () => {
+        try {
+          await deleteChapter(ch.id);
+          setChapters((prev) => prev.filter((x) => x.id !== ch.id));
+          setAllPassages((prev) =>
+            prev.map((p) => (p.chapter_id === ch.id ? { ...p, chapter_id: null } : p)),
+          );
+          setExpanded((prev) => {
+            const next = new Set(prev);
+            next.delete(ch.id);
+            next.add(UNASSIGNED);
+            return next;
+          });
+          setMenuChapterId(null);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Gagal menghapus');
+        }
+      },
+    });
   };
 
   const handleDeleteAllUnassigned = () => {
     if (unassignedPassages.length === 0) return;
-    Alert.alert(
-      'Hapus semua bagian tanpa bab?',
-      `${unassignedPassages.length} bagian akan dihapus beserta pilihannya.`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Hapus',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              for (const p of unassignedPassages) {
-                await deletePassage(p.id);
-              }
-              setAllPassages((prev) => prev.filter((p) => p.chapter_id !== null));
-              setMenuChapterId(null);
-            } catch (e) {
-              Alert.alert('Gagal', e instanceof Error ? e.message : undefined);
-            }
-          },
-        },
-      ],
-    );
+    setConfirmDialog({
+      title: 'Hapus semua bagian tanpa bab?',
+      message: `${unassignedPassages.length} bagian akan dihapus beserta pilihannya.`,
+      onConfirm: async () => {
+        try {
+          for (const p of unassignedPassages) {
+            await deletePassage(p.id);
+          }
+          setAllPassages((prev) => prev.filter((p) => p.chapter_id !== null));
+          setMenuChapterId(null);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Gagal menghapus');
+        }
+      },
+    });
   };
 
   // --- Passage operations ---
@@ -256,7 +242,7 @@ export default function EditorScreen() {
   const savePassage = async () => {
     if (!activeStory) return;
     if (!pTitle.trim()) {
-      Alert.alert('Judul bagian wajib diisi');
+      setError('Judul bagian wajib diisi');
       return;
     }
     setSaving(true);
@@ -290,32 +276,25 @@ export default function EditorScreen() {
       }
       setShowPassageEditor(false);
     } catch (e) {
-      Alert.alert('Gagal menyimpan', e instanceof Error ? e.message : undefined);
+      setError(e instanceof Error ? e.message : 'Gagal menyimpan');
     } finally {
       setSaving(false);
     }
   };
 
   const handleDeletePassage = (p: Passage) => {
-    Alert.alert(
-      'Hapus bagian?',
-      `"${p.title}" dan semua pilihan yang terhubung akan dihapus.`,
-      [
-        { text: 'Batal', style: 'cancel' },
-        {
-          text: 'Hapus',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deletePassage(p.id);
-              setAllPassages((prev) => prev.filter((x) => x.id !== p.id));
-            } catch (e) {
-              Alert.alert('Gagal menghapus', e instanceof Error ? e.message : undefined);
-            }
-          },
-        },
-      ],
-    );
+    setConfirmDialog({
+      title: 'Hapus bagian?',
+      message: `"${p.title}" dan semua pilihan yang terhubung akan dihapus.`,
+      onConfirm: async () => {
+        try {
+          await deletePassage(p.id);
+          setAllPassages((prev) => prev.filter((x) => x.id !== p.id));
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Gagal menghapus');
+        }
+      },
+    });
   };
 
   const handleSetStart = async (p: Passage) => {
@@ -324,7 +303,7 @@ export default function EditorScreen() {
       await setStartPassage(activeStory.id, p.id);
       setAllPassages((prev) => prev.map((x) => ({ ...x, is_start: x.id === p.id })));
     } catch (e) {
-      Alert.alert('Gagal', e instanceof Error ? e.message : undefined);
+      setError(e instanceof Error ? e.message : 'Gagal');
     }
   };
 
@@ -346,7 +325,7 @@ export default function EditorScreen() {
       setExpanded((prev) => new Set(prev).add(moveTarget));
       setMovePassage(null);
     } catch (e) {
-      Alert.alert('Gagal memindahkan', e instanceof Error ? e.message : undefined);
+      setError(e instanceof Error ? e.message : 'Gagal memindahkan');
     }
   };
 
@@ -372,7 +351,7 @@ export default function EditorScreen() {
       setExpanded((prev) => new Set(prev).add(moveTarget));
       setMovePassage(null);
     } catch (e) {
-      Alert.alert('Gagal menyalin', e instanceof Error ? e.message : undefined);
+      setError(e instanceof Error ? e.message : 'Gagal menyalin');
     }
   };
 
@@ -385,7 +364,7 @@ export default function EditorScreen() {
       const data = await fetchChoices(p.id);
       setChoices(data);
     } catch (e) {
-      Alert.alert('Gagal memuat pilihan', e instanceof Error ? e.message : undefined);
+      setError(e instanceof Error ? e.message : 'Gagal memuat pilihan');
     }
   };
 
@@ -406,7 +385,7 @@ export default function EditorScreen() {
   const saveChoice = async () => {
     if (!choicesFor) return;
     if (!cText.trim()) {
-      Alert.alert('Teks pilihan wajib diisi');
+      setError('Teks pilihan wajib diisi');
       return;
     }
     try {
@@ -427,26 +406,23 @@ export default function EditorScreen() {
       setCTarget(null);
       setShowChoiceForm(false);
     } catch (e) {
-      Alert.alert('Gagal menyimpan pilihan', e instanceof Error ? e.message : undefined);
+      setError(e instanceof Error ? e.message : 'Gagal menyimpan pilihan');
     }
   };
 
   const handleDeleteChoice = (c: Choice) => {
-    Alert.alert('Hapus pilihan?', undefined, [
-      { text: 'Batal', style: 'cancel' },
-      {
-        text: 'Hapus',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await deleteChoice(c.id);
-            setChoices((prev) => prev.filter((x) => x.id !== c.id));
-          } catch (e) {
-            Alert.alert('Gagal', e instanceof Error ? e.message : undefined);
-          }
-        },
+    setConfirmDialog({
+      title: 'Hapus pilihan?',
+      message: '',
+      onConfirm: async () => {
+        try {
+          await deleteChoice(c.id);
+          setChoices((prev) => prev.filter((x) => x.id !== c.id));
+        } catch (e) {
+          setError(e instanceof Error ? e.message : 'Gagal menghapus');
+        }
       },
-    ]);
+    });
   };
 
   // --- Render helpers ---
@@ -836,6 +812,32 @@ export default function EditorScreen() {
             )}
           </View>
         </View>
+      </Modal>
+
+      {/* Confirm Dialog */}
+      <Modal visible={confirmDialog !== null} animationType="fade" transparent onRequestClose={() => setConfirmDialog(null)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setConfirmDialog(null)}>
+          <View style={styles.confirmSheet}>
+            {confirmDialog && <Text style={styles.confirmTitle}>{confirmDialog.title}</Text>}
+            {confirmDialog && confirmDialog.message ? (
+              <Text style={styles.confirmMessage}>{confirmDialog.message}</Text>
+            ) : null}
+            <View style={styles.confirmActions}>
+              <Pressable style={styles.modalCancel} onPress={() => setConfirmDialog(null)}>
+                <Text style={styles.modalCancelText}>Batal</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [styles.confirmBtn, pressed && { opacity: 0.85 }]}
+                onPress={() => {
+                  const fn = confirmDialog?.onConfirm;
+                  setConfirmDialog(null);
+                  if (fn) fn();
+                }}>
+                <Text style={styles.confirmBtnText}>Hapus</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
       </Modal>
     </View>
   );
@@ -1256,5 +1258,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter-Regular',
     color: Colors.neutral[400],
+  },
+  // Confirm dialog
+  confirmSheet: {
+    backgroundColor: Colors.neutral[0],
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 36,
+  },
+  confirmTitle: {
+    fontSize: 17,
+    fontFamily: 'Inter-Bold',
+    color: Colors.neutral[900],
+    marginBottom: 8,
+  },
+  confirmMessage: {
+    fontSize: 14,
+    fontFamily: 'Inter-Regular',
+    color: Colors.neutral[500],
+    lineHeight: 20,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 24,
+  },
+  confirmBtn: {
+    backgroundColor: Colors.error[500],
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+  },
+  confirmBtnText: {
+    color: Colors.neutral[0],
+    fontSize: 15,
+    fontFamily: 'Inter-Bold',
   },
 });

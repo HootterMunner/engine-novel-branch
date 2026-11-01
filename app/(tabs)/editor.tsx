@@ -1030,7 +1030,7 @@ export default function EditorScreen() {
                 <ScrollView style={styles.targetScroll}>
                   {/* Same chapter first */}
                   {(() => {
-                    const sameCh = getSameChapterPassages(choicesFor!);
+                    const sameCh = choicesFor ? getSameChapterPassages(choicesFor) : [];
                     if (sameCh.length === 0) return null;
                     return (
                       <View style={styles.targetGroup}>
@@ -1137,7 +1137,7 @@ export default function EditorScreen() {
                   )}
                 </ScrollView>
                 <View style={styles.choiceActionsRow}>
-                  {getSameChapterPassages(choicesFor!).length > 0 && (
+                  {choicesFor && getSameChapterPassages(choicesFor).length > 0 && (
                     <Pressable style={styles.autoLinkBtn} onPress={handleAutoLink}>
                       <Link2 size={14} color={Colors.primary[600]} strokeWidth={2} />
                       <Text style={styles.autoLinkText}>Taut Otomatis</Text>

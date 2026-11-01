@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Story, Chapter, Passage, Choice, StoryExport } from './types';
+import type { Story, Chapter, Passage, Choice, StoryExport, SubChapter, ChapterLink } from './types';
 
 function mapError(error: unknown): string {
   if (error && typeof error === 'object' && 'message' in error) {
@@ -101,6 +101,96 @@ export async function deleteChapter(id: string): Promise<void> {
   if (error) throw new Error(mapError(error));
 }
 
+// ---------- SubChapters ----------
+
+export async function fetchSubChapters(chapterId: string): Promise<SubChapter[]> {
+  const { data, error } = await supabase
+    .from('subchapters')
+    .select('*')
+    .eq('chapter_id', chapterId)
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(mapError(error));
+  return data ?? [];
+}
+
+export async function fetchAllSubChapters(storyId: string): Promise<SubChapter[]> {
+  const { data: chapters } = await supabase
+    .from('chapters')
+    .select('id')
+    .eq('story_id', storyId);
+  if (!chapters || chapters.length === 0) return [];
+  const chapterIds = chapters.map((c) => c.id);
+  const { data, error } = await supabase
+    .from('subchapters')
+    .select('*')
+    .in('chapter_id', chapterIds)
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(mapError(error));
+  return data ?? [];
+}
+
+export async function createSubChapter(
+  chapterId: string,
+  title: string,
+  sortOrder = 0,
+): Promise<SubChapter> {
+  const { data, error } = await supabase
+    .from('subchapters')
+    .insert({ chapter_id: chapterId, title, sort_order: sortOrder })
+    .select()
+    .single();
+  if (error) throw new Error(mapError(error));
+  return data;
+}
+
+export async function updateSubChapter(
+  id: string,
+  patch: Partial<Pick<SubChapter, 'title' | 'sort_order'>>,
+): Promise<void> {
+  const { error } = await supabase
+    .from('subchapters')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(mapError(error));
+}
+
+export async function deleteSubChapter(id: string): Promise<void> {
+  const { error } = await supabase.from('subchapters').delete().eq('id', id);
+  if (error) throw new Error(mapError(error));
+}
+
+// ---------- Chapter Links ----------
+
+export async function fetchChapterLinks(storyId: string): Promise<ChapterLink[]> {
+  const { data, error } = await supabase
+    .from('chapter_links')
+    .select('*')
+    .eq('story_id', storyId)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(mapError(error));
+  return data ?? [];
+}
+
+export async function createChapterLink(
+  storyId: string,
+  fromChapterId: string,
+  toChapterId: string,
+  label = '',
+): Promise<ChapterLink> {
+  const { data, error } = await supabase
+    .from('chapter_links')
+    .insert({ story_id: storyId, from_chapter_id: fromChapterId, to_chapter_id: toChapterId, label })
+    .select()
+    .single();
+  if (error) throw new Error(mapError(error));
+  return data;
+}
+
+export async function deleteChapterLink(id: string): Promise<void> {
+  const { error } = await supabase.from('chapter_links').delete().eq('id', id);
+  if (error) throw new Error(mapError(error));
+}
+
 // ---------- Passages ----------
 
 export async function fetchPassages(storyId: string, chapterId?: string | null): Promise<Passage[]> {
@@ -158,7 +248,7 @@ export async function createPassage(
 export async function updatePassage(
   id: string,
   patch: Partial<
-    Pick<Passage, 'title' | 'content' | 'position_x' | 'position_y' | 'is_start' | 'chapter_id'>
+    Pick<Passage, 'title' | 'content' | 'position_x' | 'position_y' | 'is_start' | 'chapter_id' | 'subchapter_id'>
   >,
 ): Promise<void> {
   const { error } = await supabase

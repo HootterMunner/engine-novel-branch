@@ -16,10 +16,20 @@ export interface Chapter {
   updated_at: string;
 }
 
+export interface SubChapter {
+  id: string;
+  chapter_id: string;
+  title: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Passage {
   id: string;
   story_id: string;
   chapter_id: string | null;
+  subchapter_id: string | null;
   title: string;
   content: string;
   position_x: number;
@@ -35,6 +45,15 @@ export interface Choice {
   to_passage_id: string | null;
   text: string;
   sort_order: number;
+  created_at: string;
+}
+
+export interface ChapterLink {
+  id: string;
+  story_id: string;
+  from_chapter_id: string;
+  to_chapter_id: string;
+  label: string;
   created_at: string;
 }
 

@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
   ScrollView,
   Pressable,
   Modal,
@@ -20,7 +19,6 @@ import {
   Pencil,
   Link2,
   FolderInput,
-  Copy,
   MoreHorizontal,
 } from 'lucide-react-native';
 import { Colors } from '@/lib/theme';
@@ -48,46 +46,58 @@ const UNASSIGNED = '__none__';
 export default function EditorScreen() {
   const { activeStory } = useStory();
   const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [activeChapter, setActiveChapter] = useState<string>(UNASSIGNED);
-  const [passages, setPassages] = useState<Passage[]>([]);
+  const [allPassages, setAllPassages] = useState<Passage[]>([]);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingPassage, setEditingPassage] = useState<Passage | null>(null);
   const [showPassageEditor, setShowPassageEditor] = useState(false);
   const [showChapterEditor, setShowChapterEditor] = useState(false);
-  const [showChapterMenu, setShowChapterMenu] = useState(false);
+  const [menuChapterId, setMenuChapterId] = useState<string | null>(null);
   const [choicesFor, setChoicesFor] = useState<Passage | null>(null);
   const [choices, setChoices] = useState<Choice[]>([]);
   const [movePassage, setMovePassage] = useState<Passage | null>(null);
   const [moveTarget, setMoveTarget] = useState<string>(UNASSIGNED);
   const initialized = useRef(false);
+  const creatingInChapter = useRef<string>(UNASSIGNED);
 
-  // passage editor state
   const [pTitle, setPTitle] = useState('');
   const [pContent, setPContent] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // chapter editor state
   const [editingChapter, setEditingChapter] = useState<Chapter | null>(null);
   const [chTitle, setChTitle] = useState('');
   const [chSaving, setChSaving] = useState(false);
 
-  // choice editor state
   const [editingChoice, setEditingChoice] = useState<Choice | null>(null);
   const [showChoiceForm, setShowChoiceForm] = useState(false);
   const [cText, setCText] = useState('');
   const [cTarget, setCTarget] = useState<string | null>(null);
+
+  const unassignedPassages = allPassages.filter((p) => p.chapter_id === null);
+  const getChapterPassages = (chId: string) => allPassages.filter((p) => p.chapter_id === chId);
+
+  const toggleChapter = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const loadChapters = useCallback(async () => {
     if (!activeStory) return;
     try {
       const data = await fetchChapters(activeStory.id);
       setChapters(data);
-      if (!initialized.current && data.length > 0) {
-        setActiveChapter(data[0].id);
+      if (!initialized.current) {
+        const initExpanded = new Set<string>([UNASSIGNED]);
+        data.forEach((ch) => initExpanded.add(ch.id));
+        setExpanded(initExpanded);
+        initialized.current = true;
       }
-      initialized.current = true;
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal memuat bab');
     }
@@ -97,16 +107,15 @@ export default function EditorScreen() {
     if (!activeStory) return;
     try {
       setError(null);
-      const chapterId = activeChapter === UNASSIGNED ? null : activeChapter;
-      const data = await fetchPassages(activeStory.id, chapterId);
-      setPassages(data);
+      const data = await fetchPassages(activeStory.id);
+      setAllPassages(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal memuat bagian');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeStory, activeChapter]);
+  }, [activeStory]);
 
   useEffect(() => {
     if (activeStory) {
@@ -114,10 +123,9 @@ export default function EditorScreen() {
       loadChapters().then(() => loadPassages());
     } else {
       setChapters([]);
-      setPassages([]);
+      setAllPassages([]);
       setLoading(false);
       initialized.current = false;
-      setActiveChapter(UNASSIGNED);
     }
   }, [activeStory, loadChapters, loadPassages]);
 
@@ -132,14 +140,13 @@ export default function EditorScreen() {
     setEditingChapter(null);
     setChTitle('');
     setShowChapterEditor(true);
-    setShowChapterMenu(false);
   };
 
   const openEditChapter = (ch: Chapter) => {
     setEditingChapter(ch);
     setChTitle(ch.title);
     setShowChapterEditor(true);
-    setShowChapterMenu(false);
+    setMenuChapterId(null);
   };
 
   const saveChapter = async () => {
@@ -161,7 +168,7 @@ export default function EditorScreen() {
         const sortOrder = chapters.length;
         const created = await createChapter(activeStory.id, chTitle.trim(), sortOrder);
         setChapters((prev) => [...prev, created]);
-        setActiveChapter(created.id);
+        setExpanded((prev) => new Set(prev).add(created.id));
       }
       setShowChapterEditor(false);
     } catch (e) {
@@ -184,11 +191,16 @@ export default function EditorScreen() {
             try {
               await deleteChapter(ch.id);
               setChapters((prev) => prev.filter((x) => x.id !== ch.id));
-              if (activeChapter === ch.id) {
-                const remaining = chapters.filter((x) => x.id !== ch.id);
-                setActiveChapter(remaining.length > 0 ? remaining[0].id : UNASSIGNED);
-              }
-              setShowChapterMenu(false);
+              setAllPassages((prev) =>
+                prev.map((p) => (p.chapter_id === ch.id ? { ...p, chapter_id: null } : p)),
+              );
+              setExpanded((prev) => {
+                const next = new Set(prev);
+                next.delete(ch.id);
+                next.add(UNASSIGNED);
+                return next;
+              });
+              setMenuChapterId(null);
             } catch (e) {
               Alert.alert('Gagal menghapus', e instanceof Error ? e.message : undefined);
             }
@@ -198,9 +210,36 @@ export default function EditorScreen() {
     );
   };
 
+  const handleDeleteAllUnassigned = () => {
+    if (unassignedPassages.length === 0) return;
+    Alert.alert(
+      'Hapus semua bagian tanpa bab?',
+      `${unassignedPassages.length} bagian akan dihapus beserta pilihannya.`,
+      [
+        { text: 'Batal', style: 'cancel' },
+        {
+          text: 'Hapus',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              for (const p of unassignedPassages) {
+                await deletePassage(p.id);
+              }
+              setAllPassages((prev) => prev.filter((p) => p.chapter_id !== null));
+              setMenuChapterId(null);
+            } catch (e) {
+              Alert.alert('Gagal', e instanceof Error ? e.message : undefined);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   // --- Passage operations ---
 
-  const openNewPassage = () => {
+  const openNewPassage = (chapterId: string) => {
+    creatingInChapter.current = chapterId;
     setEditingPassage(null);
     setPTitle('');
     setPContent('');
@@ -222,16 +261,17 @@ export default function EditorScreen() {
     }
     setSaving(true);
     try {
-      const chapterId = activeChapter === UNASSIGNED ? null : activeChapter;
+      const chapterId = creatingInChapter.current === UNASSIGNED ? null : creatingInChapter.current;
       if (editingPassage) {
         await updatePassage(editingPassage.id, { title: pTitle.trim(), content: pContent });
-        setPassages((prev) =>
+        setAllPassages((prev) =>
           prev.map((p) =>
             p.id === editingPassage.id ? { ...p, title: pTitle.trim(), content: pContent } : p,
           ),
         );
       } else {
-        const offset = passages.length * 60;
+        const chPassages = chapterId === null ? unassignedPassages : getChapterPassages(chapterId);
+        const offset = chPassages.length * 60;
         const created = await createPassage(
           activeStory.id,
           pTitle.trim(),
@@ -240,10 +280,10 @@ export default function EditorScreen() {
           offset,
           chapterId,
         );
-        setPassages((prev) => [...prev, created]);
-        if (passages.length === 0 && activeChapter === UNASSIGNED) {
+        setAllPassages((prev) => [...prev, created]);
+        if (allPassages.length === 0) {
           await setStartPassage(activeStory.id, created.id);
-          setPassages((prev) =>
+          setAllPassages((prev) =>
             prev.map((p) => (p.id === created.id ? { ...p, is_start: true } : p)),
           );
         }
@@ -268,7 +308,7 @@ export default function EditorScreen() {
           onPress: async () => {
             try {
               await deletePassage(p.id);
-              setPassages((prev) => prev.filter((x) => x.id !== p.id));
+              setAllPassages((prev) => prev.filter((x) => x.id !== p.id));
             } catch (e) {
               Alert.alert('Gagal menghapus', e instanceof Error ? e.message : undefined);
             }
@@ -282,7 +322,7 @@ export default function EditorScreen() {
     if (!activeStory) return;
     try {
       await setStartPassage(activeStory.id, p.id);
-      setPassages((prev) => prev.map((x) => ({ ...x, is_start: x.id === p.id })));
+      setAllPassages((prev) => prev.map((x) => ({ ...x, is_start: x.id === p.id })));
     } catch (e) {
       Alert.alert('Gagal', e instanceof Error ? e.message : undefined);
     }
@@ -300,7 +340,10 @@ export default function EditorScreen() {
     const newChapterId = moveTarget === UNASSIGNED ? null : moveTarget;
     try {
       await updatePassage(movePassage.id, { chapter_id: newChapterId });
-      setPassages((prev) => prev.filter((x) => x.id !== movePassage.id));
+      setAllPassages((prev) =>
+        prev.map((p) => (p.id === movePassage.id ? { ...p, chapter_id: newChapterId } : p)),
+      );
+      setExpanded((prev) => new Set(prev).add(moveTarget));
       setMovePassage(null);
     } catch (e) {
       Alert.alert('Gagal memindahkan', e instanceof Error ? e.message : undefined);
@@ -311,7 +354,8 @@ export default function EditorScreen() {
     if (!movePassage || !activeStory) return;
     const newChapterId = moveTarget === UNASSIGNED ? null : moveTarget;
     try {
-      const offset = (passages.length + 1) * 60;
+      const chPassages = newChapterId === null ? unassignedPassages : getChapterPassages(newChapterId);
+      const offset = (chPassages.length + 1) * 60;
       const created = await createPassage(
         activeStory.id,
         movePassage.title,
@@ -324,9 +368,8 @@ export default function EditorScreen() {
       for (const c of passageChoices) {
         await createChoice(created.id, c.text, c.to_passage_id, c.sort_order);
       }
-      if (moveTarget === activeChapter || (moveTarget === UNASSIGNED && activeChapter === UNASSIGNED)) {
-        setPassages((prev) => [...prev, created]);
-      }
+      setAllPassages((prev) => [...prev, created]);
+      setExpanded((prev) => new Set(prev).add(moveTarget));
       setMovePassage(null);
     } catch (e) {
       Alert.alert('Gagal menyalin', e instanceof Error ? e.message : undefined);
@@ -406,6 +449,103 @@ export default function EditorScreen() {
     ]);
   };
 
+  // --- Render helpers ---
+
+  const renderPassageCard = (p: Passage) => (
+    <View key={p.id} style={styles.passageCard}>
+      <Pressable
+        style={({ pressed }) => [styles.passageMain, pressed && { opacity: 0.7 }]}
+        onPress={() => openEditPassage(p)}>
+        <View style={{ flex: 1 }}>
+          <View style={styles.passageHeader}>
+            {p.is_start && (
+              <View style={styles.startBadge}>
+                <Star size={10} color={Colors.accent[600]} strokeWidth={2.5} fill={Colors.accent[400]} />
+                <Text style={styles.startBadgeText}>Mulai</Text>
+              </View>
+            )}
+            <Text style={styles.passageTitle} numberOfLines={1}>{p.title}</Text>
+          </View>
+          {p.content ? (
+            <Text style={styles.passageContent} numberOfLines={2}>{p.content}</Text>
+          ) : (
+            <Text style={styles.passageEmpty}>Bagian kosong</Text>
+          )}
+        </View>
+        <ChevronRight size={20} color={Colors.neutral[300]} strokeWidth={2} />
+      </Pressable>
+      <View style={styles.passageActions}>
+        <Pressable style={styles.passageActionBtn} onPress={() => openChoices(p)}>
+          <Link2 size={14} color={Colors.primary[600]} strokeWidth={2} />
+          <Text style={styles.passageActionText}>Pilihan</Text>
+        </Pressable>
+        <Pressable style={styles.passageActionBtn} onPress={() => openMovePassage(p)}>
+          <FolderInput size={14} color={Colors.neutral[600]} strokeWidth={2} />
+          <Text style={styles.passageActionTextMuted}>Pindah</Text>
+        </Pressable>
+        {!p.is_start && (
+          <Pressable style={styles.passageActionBtn} onPress={() => handleSetStart(p)}>
+            <Star size={14} color={Colors.neutral[400]} strokeWidth={2} />
+            <Text style={styles.passageActionTextMuted}>Awal</Text>
+          </Pressable>
+        )}
+        <Pressable
+          style={[styles.passageActionBtn, styles.passageActionDanger]}
+          onPress={() => handleDeletePassage(p)}>
+          <Trash2 size={14} color={Colors.error[500]} strokeWidth={2} />
+          <Text style={styles.passageActionTextDanger}>Hapus</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
+  const renderAddPassageBtn = (chapterId: string) => (
+    <Pressable
+      style={({ pressed }) => [styles.addPassageBtn, pressed && { opacity: 0.7 }]}
+      onPress={() => openNewPassage(chapterId)}>
+      <Plus size={16} color={Colors.primary[600]} strokeWidth={2.5} />
+      <Text style={styles.addPassageText}>Tambah Bagian</Text>
+    </Pressable>
+  );
+
+  const renderAccordion = (id: string, title: string, count: number) => {
+    const isExpanded = expanded.has(id);
+    const chPassages = id === UNASSIGNED ? unassignedPassages : getChapterPassages(id);
+    return (
+      <View key={id} style={styles.accordionSection}>
+        <View style={styles.accordionHeader}>
+          <Pressable
+            style={styles.accordionHeaderLeft}
+            onPress={() => toggleChapter(id)}>
+            <View style={[styles.chevronWrap, isExpanded && styles.chevronExpanded]}>
+              <ChevronRight size={16} color={Colors.neutral[500]} strokeWidth={2.5} />
+            </View>
+            <Text style={styles.accordionTitle} numberOfLines={1}>{title}</Text>
+            <View style={styles.accordionCount}>
+              <Text style={styles.accordionCountText}>{count}</Text>
+            </View>
+          </Pressable>
+          <Pressable
+            style={styles.accordionMenuBtn}
+            onPress={() => setMenuChapterId(id)}
+            hitSlop={8}>
+            <MoreHorizontal size={18} color={Colors.neutral[400]} strokeWidth={2} />
+          </Pressable>
+        </View>
+        {isExpanded && (
+          <View style={styles.accordionBody}>
+            {chPassages.length > 0 ? (
+              chPassages.map(renderPassageCard)
+            ) : (
+              <Text style={styles.accordionEmpty}>Belum ada bagian di sini.</Text>
+            )}
+            {renderAddPassageBtn(id)}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   // --- Render guards ---
 
   if (!activeStory) {
@@ -422,6 +562,8 @@ export default function EditorScreen() {
   if (loading) return <LoadingView message="Memuat bagian..." />;
   if (error) return <ErrorView message={error} />;
 
+  const isEmpty = chapters.length === 0 && allPassages.length === 0;
+
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
@@ -429,130 +571,37 @@ export default function EditorScreen() {
         <Text style={styles.headerSubtitle} numberOfLines={1}>{activeStory.title}</Text>
       </View>
 
-      {/* Chapter tabs bar */}
-      <View style={styles.chapterBar}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chapterTabs}>
-          <Pressable
-            style={[
-              styles.chapterTab,
-              activeChapter === UNASSIGNED && styles.chapterTabActive,
-            ]}
-            onPress={() => setActiveChapter(UNASSIGNED)}>
-            <Text
-              style={[
-                styles.chapterTabText,
-                activeChapter === UNASSIGNED && styles.chapterTabTextActive,
-              ]}>
-              Tanpa Bab
-            </Text>
-          </Pressable>
-          {chapters.map((ch) => (
-            <Pressable
-              key={ch.id}
-              style={[
-                styles.chapterTab,
-                activeChapter === ch.id && styles.chapterTabActive,
-              ]}
-              onPress={() => setActiveChapter(ch.id)}>
-              <Text
-                style={[
-                  styles.chapterTabText,
-                  activeChapter === ch.id && styles.chapterTabTextActive,
-                ]}
-                numberOfLines={1}>
-                {ch.title}
-              </Text>
-            </Pressable>
-          ))}
-          <Pressable style={styles.chapterAddBtn} onPress={openNewChapter}>
-            <Plus size={18} color={Colors.primary[600]} strokeWidth={2.5} />
-          </Pressable>
-        </ScrollView>
-        {activeChapter !== UNASSIGNED && (
-          <Pressable
-            style={styles.chapterMenuBtn}
-            onPress={() => setShowChapterMenu(true)}
-            hitSlop={8}>
-            <MoreHorizontal size={18} color={Colors.neutral[400]} strokeWidth={2} />
-          </Pressable>
-        )}
-      </View>
-
-      {/* Passage list for active chapter */}
-      <FlatList
-        data={passages}
-        keyExtractor={(item) => item.id}
+      <ScrollView
+        style={{ flex: 1 }}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        ListEmptyComponent={
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
+        {isEmpty ? (
           <EmptyView
             icon={<FileText size={32} color={Colors.primary[500]} strokeWidth={2} />}
-            title="Belum ada bagian"
-            subtitle={
-              activeChapter === UNASSIGNED
-                ? 'Buat bagian pertama di bab ini atau buat bab baru untuk mulai menulis.'
-                : 'Buat bagian pertama di bab ini untuk mulai menulis cerita bercabang.'
-            }
-            action={<PrimaryButton label="Buat Bagian" onPress={openNewPassage} />}
-          />
-        }
-        renderItem={({ item }) => (
-          <View style={styles.passageCard}>
-            <Pressable
-              style={({ pressed }) => [styles.passageMain, pressed && { opacity: 0.7 }]}
-              onPress={() => openEditPassage(item)}>
-              <View style={{ flex: 1 }}>
-                <View style={styles.passageHeader}>
-                  {item.is_start && (
-                    <View style={styles.startBadge}>
-                      <Star size={10} color={Colors.accent[600]} strokeWidth={2.5} fill={Colors.accent[400]} />
-                      <Text style={styles.startBadgeText}>Mulai</Text>
-                    </View>
-                  )}
-                  <Text style={styles.passageTitle} numberOfLines={1}>{item.title}</Text>
-                </View>
-                {item.content ? (
-                  <Text style={styles.passageContent} numberOfLines={2}>{item.content}</Text>
-                ) : (
-                  <Text style={styles.passageEmpty}>Bagian kosong</Text>
-                )}
+            title="Belum ada bab atau bagian"
+            subtitle="Mulai dengan membuat bab pertama atau bagian pertama."
+            action={
+              <View style={{ gap: 10 }}>
+                <PrimaryButton label="Buat Bab" onPress={openNewChapter} />
+                <SecondaryButton label="Buat Bagian Tanpa Bab" onPress={() => openNewPassage(UNASSIGNED)} />
               </View>
-              <ChevronRight size={20} color={Colors.neutral[300]} strokeWidth={2} />
+            }
+          />
+        ) : (
+          <>
+            {unassignedPassages.length > 0 && renderAccordion(UNASSIGNED, 'Tanpa Bab', unassignedPassages.length)}
+            {chapters.map((ch) =>
+              renderAccordion(ch.id, ch.title, getChapterPassages(ch.id).length),
+            )}
+            <Pressable
+              style={({ pressed }) => [styles.addChapterBtn, pressed && { opacity: 0.7 }]}
+              onPress={openNewChapter}>
+              <Plus size={18} color={Colors.primary[600]} strokeWidth={2.5} />
+              <Text style={styles.addChapterText}>Tambah Bab</Text>
             </Pressable>
-            <View style={styles.passageActions}>
-              <Pressable style={styles.passageActionBtn} onPress={() => openChoices(item)}>
-                <Link2 size={15} color={Colors.primary[600]} strokeWidth={2} />
-                <Text style={styles.passageActionText}>Pilihan</Text>
-              </Pressable>
-              <Pressable style={styles.passageActionBtn} onPress={() => openMovePassage(item)}>
-                <FolderInput size={15} color={Colors.neutral[600]} strokeWidth={2} />
-                <Text style={styles.passageActionTextMuted}>Pindah/Salin</Text>
-              </Pressable>
-              {!item.is_start && (
-                <Pressable style={styles.passageActionBtn} onPress={() => handleSetStart(item)}>
-                  <Star size={15} color={Colors.neutral[400]} strokeWidth={2} />
-                  <Text style={styles.passageActionTextMuted}>Awal</Text>
-                </Pressable>
-              )}
-              <Pressable
-                style={[styles.passageActionBtn, styles.passageActionDanger]}
-                onPress={() => handleDeletePassage(item)}>
-                <Trash2 size={15} color={Colors.error[500]} strokeWidth={2} />
-                <Text style={styles.passageActionTextDanger}>Hapus</Text>
-              </Pressable>
-            </View>
-          </View>
+          </>
         )}
-      />
-
-      {passages.length > 0 && (
-        <View style={styles.bottomBar}>
-          <PrimaryButton label="Buat Bagian" onPress={openNewPassage} style={{ flex: 1 }} />
-        </View>
-      )}
+      </ScrollView>
 
       {/* Passage Editor Modal */}
       <Modal visible={showPassageEditor} animationType="slide" transparent onRequestClose={() => setShowPassageEditor(false)}>
@@ -611,12 +660,28 @@ export default function EditorScreen() {
         </View>
       </Modal>
 
-      {/* Chapter Context Menu */}
-      <Modal visible={showChapterMenu} animationType="fade" transparent onRequestClose={() => setShowChapterMenu(false)}>
-        <Pressable style={styles.menuOverlay} onPress={() => setShowChapterMenu(false)}>
+      {/* Chapter / Unassigned Context Menu */}
+      <Modal visible={menuChapterId !== null} animationType="fade" transparent onRequestClose={() => setMenuChapterId(null)}>
+        <Pressable style={styles.menuOverlay} onPress={() => setMenuChapterId(null)}>
           <View style={styles.menuSheet}>
             {(() => {
-              const ch = chapters.find((x) => x.id === activeChapter);
+              if (!menuChapterId) return null;
+              if (menuChapterId === UNASSIGNED) {
+                return (
+                  <>
+                    <Text style={styles.menuTitle}>Tanpa Bab</Text>
+                    {unassignedPassages.length > 0 && (
+                      <Pressable
+                        style={[styles.menuItem, styles.menuItemDanger]}
+                        onPress={handleDeleteAllUnassigned}>
+                        <Trash2 size={18} color={Colors.error[600]} strokeWidth={2} />
+                        <Text style={styles.menuItemTextDanger}>Hapus Semua Bagian</Text>
+                      </Pressable>
+                    )}
+                  </>
+                );
+              }
+              const ch = chapters.find((x) => x.id === menuChapterId);
               if (!ch) return null;
               return (
                 <>
@@ -646,18 +711,24 @@ export default function EditorScreen() {
             <Text style={styles.moveSubtitle} numberOfLines={1}>{movePassage?.title}</Text>
             <Text style={styles.inputLabel}>Pilih bab tujuan:</Text>
             <ScrollView style={styles.moveList}>
-              {activeChapter !== UNASSIGNED && (
-                <Pressable
-                  style={[styles.targetItem, moveTarget === UNASSIGNED && styles.targetItemSelected]}
-                  onPress={() => setMoveTarget(UNASSIGNED)}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.targetItemText}>Tanpa Bab</Text>
-                  </View>
-                  {moveTarget === UNASSIGNED && <View style={styles.targetCheck} />}
-                </Pressable>
-              )}
+              {(() => {
+                const currentCh = movePassage?.chapter_id ?? UNASSIGNED;
+                if (currentCh !== UNASSIGNED) {
+                  return (
+                    <Pressable
+                      style={[styles.targetItem, moveTarget === UNASSIGNED && styles.targetItemSelected]}
+                      onPress={() => setMoveTarget(UNASSIGNED)}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.targetItemText}>Tanpa Bab</Text>
+                      </View>
+                      {moveTarget === UNASSIGNED && <View style={styles.targetCheck} />}
+                    </Pressable>
+                  );
+                }
+                return null;
+              })()}
               {chapters
-                .filter((ch) => ch.id !== activeChapter)
+                .filter((ch) => ch.id !== (movePassage?.chapter_id ?? ''))
                 .map((ch) => (
                   <Pressable
                     key={ch.id}
@@ -669,9 +740,6 @@ export default function EditorScreen() {
                     {moveTarget === ch.id && <View style={styles.targetCheck} />}
                   </Pressable>
                 ))}
-              {chapters.length === 0 && activeChapter === UNASSIGNED && (
-                <Text style={styles.moveHint}>Buat bab lain dulu untuk memindahkan/menyalin.</Text>
-              )}
             </ScrollView>
             <View style={styles.moveActions}>
               <Pressable style={styles.modalCancel} onPress={() => setMovePassage(null)}>
@@ -710,7 +778,7 @@ export default function EditorScreen() {
                 />
                 <Text style={styles.inputLabel}>Tujuan</Text>
                 <ScrollView>
-                  {passages
+                  {allPassages
                     .filter((p) => p.id !== choicesFor?.id)
                     .map((p) => (
                       <Pressable
@@ -735,33 +803,32 @@ export default function EditorScreen() {
               </View>
             ) : (
               <View style={{ maxHeight: 400 }}>
-                <FlatList
-                  data={choices}
-                  keyExtractor={(item) => item.id}
-                  ListEmptyComponent={
+                <ScrollView>
+                  {choices.length === 0 ? (
                     <View style={styles.choiceEmpty}>
                       <Text style={styles.choiceEmptyText}>Belum ada pilihan di bagian ini.</Text>
                     </View>
-                  }
-                  renderItem={({ item }) => {
-                    const target = passages.find((p) => p.id === item.to_passage_id);
-                    return (
-                      <View style={styles.choiceItem}>
-                        <Pressable
-                          style={{ flex: 1 }}
-                          onPress={() => openEditChoice(item)}>
-                          <Text style={styles.choiceText}>{item.text}</Text>
-                          <Text style={styles.choiceTarget} numberOfLines={1}>
-                            {target ? `→ ${target.title}` : '→ ujung buntu'}
-                          </Text>
-                        </Pressable>
-                        <Pressable hitSlop={12} onPress={() => handleDeleteChoice(item)} style={styles.choiceDelete}>
-                          <Trash2 size={16} color={Colors.error[500]} strokeWidth={2} />
-                        </Pressable>
-                      </View>
-                    );
-                  }}
-                />
+                  ) : (
+                    choices.map((item) => {
+                      const target = allPassages.find((p) => p.id === item.to_passage_id);
+                      return (
+                        <View key={item.id} style={styles.choiceItem}>
+                          <Pressable
+                            style={{ flex: 1 }}
+                            onPress={() => openEditChoice(item)}>
+                            <Text style={styles.choiceText}>{item.text}</Text>
+                            <Text style={styles.choiceTarget} numberOfLines={1}>
+                              {target ? `→ ${target.title}` : '→ ujung buntu'}
+                            </Text>
+                          </Pressable>
+                          <Pressable hitSlop={12} onPress={() => handleDeleteChoice(item)} style={styles.choiceDelete}>
+                            <Trash2 size={16} color={Colors.error[500]} strokeWidth={2} />
+                          </Pressable>
+                        </View>
+                      );
+                    })
+                  )}
+                </ScrollView>
                 <View style={{ marginTop: 16 }}>
                   <SecondaryButton label="Tambah Pilihan" onPress={openNewChoice} />
                 </View>
@@ -798,62 +865,84 @@ const styles = StyleSheet.create({
     color: Colors.neutral[400],
     marginTop: 4,
   },
-  chapterBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.neutral[0],
-    borderBottomColor: Colors.neutral[100],
-    borderBottomWidth: 1,
-    paddingRight: 8,
-  },
-  chapterTabs: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  chapterTab: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    backgroundColor: Colors.neutral[100],
-    maxWidth: 160,
-  },
-  chapterTabActive: {
-    backgroundColor: Colors.primary[600],
-  },
-  chapterTabText: {
-    fontSize: 13,
-    fontFamily: 'Inter-Medium',
-    color: Colors.neutral[600],
-  },
-  chapterTabTextActive: {
-    color: Colors.neutral[0],
-    fontFamily: 'Inter-Bold',
-  },
-  chapterAddBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: Colors.primary[50],
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chapterMenuBtn: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   list: {
     padding: 16,
-    paddingBottom: 100,
+    paddingBottom: 80,
   },
-  passageCard: {
+  // Accordion
+  accordionSection: {
+    marginBottom: 10,
     backgroundColor: Colors.neutral[0],
-    borderRadius: 16,
-    marginBottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.neutral[100],
+    overflow: 'hidden',
+  },
+  accordionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  accordionHeaderLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  chevronWrap: {
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chevronExpanded: {
+    transform: [{ rotate: '90deg' }],
+  },
+  accordionTitle: {
+    fontSize: 15,
+    fontFamily: 'Inter-Bold',
+    color: Colors.neutral[800],
+    flex: 1,
+  },
+  accordionCount: {
+    backgroundColor: Colors.neutral[100],
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    minWidth: 24,
+    alignItems: 'center',
+  },
+  accordionCountText: {
+    fontSize: 11,
+    fontFamily: 'Inter-Bold',
+    color: Colors.neutral[500],
+  },
+  accordionMenuBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+  accordionBody: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    paddingTop: 2,
+  },
+  accordionEmpty: {
+    fontSize: 13,
+    fontFamily: 'Inter-Regular',
+    color: Colors.neutral[300],
+    fontStyle: 'italic',
+    paddingVertical: 16,
+    textAlign: 'center',
+  },
+  // Passage card (inside accordion)
+  passageCard: {
+    backgroundColor: Colors.neutral[50],
+    borderRadius: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: Colors.neutral[100],
     overflow: 'hidden',
@@ -861,8 +950,8 @@ const styles = StyleSheet.create({
   passageMain: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    gap: 12,
+    padding: 14,
+    gap: 10,
   },
   passageHeader: {
     flexDirection: 'row',
@@ -885,7 +974,7 @@ const styles = StyleSheet.create({
     color: Colors.accent[600],
   },
   passageTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: 'Inter-Bold',
     color: Colors.neutral[900],
     flexShrink: 1,
@@ -912,21 +1001,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 12,
+    gap: 5,
+    paddingVertical: 10,
   },
   passageActionText: {
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: 'Inter-Medium',
     color: Colors.primary[600],
   },
   passageActionTextMuted: {
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: 'Inter-Medium',
     color: Colors.neutral[400],
   },
   passageActionTextDanger: {
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: 'Inter-Medium',
     color: Colors.error[500],
   },
@@ -934,18 +1023,42 @@ const styles = StyleSheet.create({
     borderLeftColor: Colors.neutral[100],
     borderLeftWidth: 1,
   },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
-    backgroundColor: Colors.neutral[0],
-    borderTopColor: Colors.neutral[100],
-    borderTopWidth: 1,
+  addPassageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.primary[100],
+    borderStyle: 'dashed',
+    backgroundColor: Colors.neutral[50],
+    marginTop: 4,
   },
+  addPassageText: {
+    fontSize: 13,
+    fontFamily: 'Inter-Medium',
+    color: Colors.primary[600],
+  },
+  addChapterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.neutral[200],
+    borderStyle: 'dashed',
+    marginTop: 4,
+  },
+  addChapterText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: Colors.primary[600],
+  },
+  // Modals
   modalOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -1001,6 +1114,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     color: Colors.neutral[500],
   },
+  // Context menu
   menuOverlay: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -1043,6 +1157,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     color: Colors.error[600],
   },
+  // Move/copy
   moveSubtitle: {
     fontSize: 13,
     fontFamily: 'Inter-Regular',
@@ -1061,12 +1176,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     flexWrap: 'wrap',
   },
-  moveHint: {
-    fontSize: 13,
-    fontFamily: 'Inter-Regular',
-    color: Colors.neutral[400],
-    flex: 1,
-  },
+  // Choice editor
   choiceHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',

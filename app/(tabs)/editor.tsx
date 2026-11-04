@@ -71,6 +71,7 @@ export default function EditorScreen() {
   const [choices, setChoices] = useState<Choice[]>([]);
   const [movePassage, setMovePassage] = useState<Passage | null>(null);
   const [moveTarget, setMoveTarget] = useState<string>(UNASSIGNED);
+  const [moveSubTarget, setMoveSubTarget] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
   const [showLinkEditor, setShowLinkEditor] = useState(false);
   const [linkFromChapter, setLinkFromChapter] = useState<string | null>(null);
@@ -440,17 +441,24 @@ export default function EditorScreen() {
   const openMovePassage = (p: Passage) => {
     setMovePassage(p);
     setMoveTarget(UNASSIGNED);
+    setMoveSubTarget(null);
   };
 
   const handleMovePassage = async () => {
     if (!movePassage) return;
     const newChapterId = moveTarget === UNASSIGNED ? null : moveTarget;
+    const newSubChapterId = moveTarget === UNASSIGNED ? null : moveSubTarget;
     try {
-      await updatePassage(movePassage.id, { chapter_id: newChapterId, subchapter_id: null });
+      if (newSubChapterId) {
+        await updatePassage(movePassage.id, { chapter_id: newChapterId, subchapter_id: newSubChapterId });
+      } else {
+        await updatePassage(movePassage.id, { chapter_id: newChapterId, subchapter_id: null });
+      }
       setAllPassages((prev) =>
-        prev.map((p) => (p.id === movePassage.id ? { ...p, chapter_id: newChapterId, subchapter_id: null } : p)),
+        prev.map((p) => (p.id === movePassage.id ? { ...p, chapter_id: newChapterId, subchapter_id: newSubChapterId } : p)),
       );
       setExpanded((prev) => new Set(prev).add(moveTarget));
+      if (newSubChapterId) setExpanded((prev) => new Set(prev).add(newSubChapterId));
       setMovePassage(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal memindahkan');
@@ -460,16 +468,25 @@ export default function EditorScreen() {
   const handleCopyPassage = async () => {
     if (!movePassage || !activeStory) return;
     const newChapterId = moveTarget === UNASSIGNED ? null : moveTarget;
+    const newSubChapterId = moveTarget === UNASSIGNED ? null : moveSubTarget;
     try {
-      const existing = newChapterId === null ? unassignedPassages : getChapterPassages(newChapterId);
+      const existing = newSubChapterId
+        ? getSubChapterPassages(newSubChapterId)
+        : newChapterId === null
+          ? unassignedPassages
+          : getChapterPassages(newChapterId);
       const offset = (existing.length + 1) * 60;
       const created = await createPassage(activeStory.id, movePassage.title, movePassage.content, offset, offset, newChapterId);
+      if (newSubChapterId) {
+        await updatePassage(created.id, { subchapter_id: newSubChapterId });
+      }
       const passageChoices = await fetchChoices(movePassage.id);
       for (const c of passageChoices) {
         await createChoice(created.id, c.text, c.to_passage_id, c.sort_order);
       }
-      setAllPassages((prev) => [...prev, created]);
+      setAllPassages((prev) => [...prev, newSubChapterId ? { ...created, subchapter_id: newSubChapterId } : created]);
       setExpanded((prev) => new Set(prev).add(moveTarget));
+      if (newSubChapterId) setExpanded((prev) => new Set(prev).add(newSubChapterId));
       setMovePassage(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal menyalin');
@@ -966,7 +983,7 @@ export default function EditorScreen() {
           <View style={styles.modalSheet}>
             <Text style={styles.modalTitle}>Pindah / Salin Bagian</Text>
             <Text style={styles.moveSubtitle} numberOfLines={1}>{movePassage?.title}</Text>
-            <Text style={styles.inputLabel}>Pilih bab tujuan:</Text>
+            <Text style={styles.inputLabel}>Pilih bab atau sub-bab tujuan:</Text>
             <ScrollView style={styles.moveList}>
               {(() => {
                 const currentCh = movePassage?.chapter_id ?? UNASSIGNED;
@@ -974,7 +991,7 @@ export default function EditorScreen() {
                   return (
                     <Pressable
                       style={[styles.targetItem, moveTarget === UNASSIGNED && styles.targetItemSelected]}
-                      onPress={() => setMoveTarget(UNASSIGNED)}>
+                      onPress={() => { setMoveTarget(UNASSIGNED); setMoveSubTarget(null); }}>
                       <View style={{ flex: 1 }}>
                         <Text style={styles.targetItemText}>Tanpa Bab</Text>
                       </View>
@@ -985,18 +1002,41 @@ export default function EditorScreen() {
                 return null;
               })()}
               {chapters
-                .filter((ch) => ch.id !== (movePassage?.chapter_id ?? ''))
-                .map((ch) => (
-                  <Pressable
-                    key={ch.id}
-                    style={[styles.targetItem, moveTarget === ch.id && styles.targetItemSelected]}
-                    onPress={() => setMoveTarget(ch.id)}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.targetItemText} numberOfLines={1}>{ch.title}</Text>
+                .map((ch) => {
+                  const chSubs = getChapterSubChapters(ch.id);
+                  const isChSelected = moveTarget === ch.id && !moveSubTarget;
+                  return (
+                    <View key={ch.id} style={styles.moveGroup}>
+                      <Pressable
+                        style={[styles.targetItem, isChSelected && styles.targetItemSelected]}
+                        onPress={() => { setMoveTarget(ch.id); setMoveSubTarget(null); }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.targetItemText} numberOfLines={1}>{ch.title}</Text>
+                          {chSubs.length > 0 && (
+                            <Text style={styles.targetSubLabel}>{chSubs.length} sub-bab</Text>
+                          )}
+                        </View>
+                        {isChSelected && <View style={styles.targetCheck} />}
+                      </Pressable>
+                      {moveTarget === ch.id && chSubs.length > 0 && (
+                        <View style={styles.moveSubList}>
+                          {chSubs.map((sc) => (
+                            <Pressable
+                              key={sc.id}
+                              style={[styles.targetItem, styles.moveSubItem, moveSubTarget === sc.id && styles.targetItemSelected]}
+                              onPress={() => { setMoveTarget(ch.id); setMoveSubTarget(sc.id); }}>
+                              <Layers size={13} color={Colors.primary[500]} strokeWidth={2} />
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.moveSubItemText} numberOfLines={1}>{sc.title}</Text>
+                              </View>
+                              {moveSubTarget === sc.id && <View style={styles.targetCheck} />}
+                            </Pressable>
+                          ))}
+                        </View>
+                      )}
                     </View>
-                    {moveTarget === ch.id && <View style={styles.targetCheck} />}
-                  </Pressable>
-                ))}
+                  );
+                })}
             </ScrollView>
             <View style={styles.moveActions}>
               <Pressable style={styles.modalCancel} onPress={() => setMovePassage(null)}>
@@ -1309,7 +1349,11 @@ const styles = StyleSheet.create({
   menuItemTextDanger: { fontSize: 15, fontFamily: 'Inter-Medium', color: Colors.error[600] },
   // Move/copy
   moveSubtitle: { fontSize: 13, fontFamily: 'Inter-Regular', color: Colors.neutral[400], marginTop: 2 },
-  moveList: { maxHeight: 200, marginTop: 8 },
+  moveList: { maxHeight: 260, marginTop: 8 },
+  moveGroup: { marginBottom: 4 },
+  moveSubList: { paddingLeft: 14 },
+  moveSubItem: { paddingVertical: 10, paddingHorizontal: 12, marginBottom: 5 },
+  moveSubItemText: { fontSize: 13, fontFamily: 'Inter-Medium', color: Colors.neutral[700] },
   moveActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 12, marginTop: 24, flexWrap: 'wrap' },
   // Choice editor
   choiceHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 8 },

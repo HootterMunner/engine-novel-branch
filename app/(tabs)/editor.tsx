@@ -418,6 +418,7 @@ export default function EditorScreen() {
           await setStartPassage(activeStory.id, created.id);
           setAllPassages((prev) => prev.map((p) => (p.id === created.id ? { ...p, is_start: true } : p)));
         }
+        await autoLinkChain(created, existing);
       }
       setShowPassageEditor(false);
     } catch (e) {
@@ -473,6 +474,12 @@ export default function EditorScreen() {
       setAllPassages((prev) =>
         prev.map((p) => (p.id === movePassage.id ? { ...p, chapter_id: newChapterId, subchapter_id: newSubChapterId } : p)),
       );
+      const targetSiblings = (newSubChapterId
+        ? allPassages.filter((p) => p.subchapter_id === newSubChapterId && p.id !== movePassage.id)
+        : newChapterId === null
+          ? unassignedPassages.filter((p) => p.id !== movePassage.id)
+          : getChapterPassages(newChapterId).filter((p) => p.id !== movePassage.id));
+      await autoLinkChain(movePassage, targetSiblings);
       setExpanded((prev) => new Set(prev).add(moveTarget));
       if (newSubChapterId) setExpanded((prev) => new Set(prev).add(newSubChapterId));
       setMovePassage(null);
@@ -501,6 +508,7 @@ export default function EditorScreen() {
         await createChoice(created.id, c.text, c.to_passage_id, c.sort_order);
       }
       setAllPassages((prev) => [...prev, newSubChapterId ? { ...created, subchapter_id: newSubChapterId } : created]);
+      await autoLinkChain(newSubChapterId ? { ...created, subchapter_id: newSubChapterId } : created, existing);
       setExpanded((prev) => new Set(prev).add(moveTarget));
       if (newSubChapterId) setExpanded((prev) => new Set(prev).add(newSubChapterId));
       setMovePassage(null);
@@ -525,34 +533,22 @@ export default function EditorScreen() {
     return allPassages.filter((x) => x.chapter_id === p.chapter_id && x.id !== p.id);
   };
 
-  const handleAutoLink = async () => {
-    if (!choicesFor) return;
-    const chain = [choicesFor, ...getSameChapterPassages(choicesFor)];
-    if (chain.length < 2) return;
+  const autoLinkChain = async (newPassage: Passage, siblings: Passage[]) => {
+    if (!autoLinkEnabled || siblings.length === 0) return;
+    const prev = siblings[siblings.length - 1];
     try {
-      const newChoices: Choice[] = [];
-      for (let i = 0; i < chain.length - 1; i++) {
-        const from = chain[i];
-        const to = chain[i + 1];
-        const existingFrom = await fetchChoices(from.id);
-        const alreadyLinked = existingFrom.some((c) => c.to_passage_id === to.id);
-        if (!alreadyLinked) {
-          const c1 = await createChoice(from.id, `Lanjut ke: ${to.title}`, to.id, existingFrom.length);
-          newChoices.push(c1);
-        }
-        const existingTo = await fetchChoices(to.id);
-        const alreadyBack = existingTo.some((c) => c.to_passage_id === from.id);
-        if (!alreadyBack) {
-          const c2 = await createChoice(to.id, `Kembali ke: ${from.title}`, from.id, existingTo.length);
-          newChoices.push(c2);
-        }
+      const prevChoices = await fetchChoices(prev.id);
+      const hasForward = prevChoices.some((c) => c.to_passage_id === newPassage.id);
+      if (!hasForward) {
+        await createChoice(prev.id, `Lanjut ke: ${newPassage.title}`, newPassage.id, prevChoices.length);
       }
-      if (newChoices.length > 0) {
-        const refreshData = await fetchChoices(choicesFor.id);
-        setChoices(refreshData);
+      const newChoices = await fetchChoices(newPassage.id);
+      const hasBack = newChoices.some((c) => c.to_passage_id === prev.id);
+      if (!hasBack) {
+        await createChoice(newPassage.id, `Kembali ke: ${prev.title}`, prev.id, newChoices.length);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Gagal membuat tautan');
+    } catch {
+      // silent — chain link is best-effort
     }
   };
 
@@ -1218,12 +1214,6 @@ export default function EditorScreen() {
                   )}
                 </ScrollView>
                 <View style={styles.choiceActionsRow}>
-                  {autoLinkEnabled && choicesFor && getSameChapterPassages(choicesFor).length > 0 && (
-                    <Pressable style={styles.autoLinkBtn} onPress={handleAutoLink}>
-                      <Link2 size={14} color={Colors.primary[600]} strokeWidth={2} />
-                      <Text style={styles.autoLinkText}>Taut Otomatis</Text>
-                    </Pressable>
-                  )}
                   <SecondaryButton label="Tambah Pilihan" onPress={openNewChoice} />
                 </View>
               </View>
@@ -1239,9 +1229,9 @@ export default function EditorScreen() {
             <Text style={styles.modalTitle}>Pengaturan Editor</Text>
             <View style={styles.settingRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.settingLabel}>Taut Otomatis</Text>
+                <Text style={styles.settingLabel}>Taut Otomatis Rantai</Text>
                 <Text style={styles.settingDesc}>
-                  Menghubungkan bagian otomatis: A↔B dan B→C secara berantai
+                  Setiap bagian baru otomatis tersambung dua arah dengan bagian sebelumnya di bab/sub-bab yang sama
                 </Text>
               </View>
               <Switch

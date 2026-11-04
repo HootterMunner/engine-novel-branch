@@ -8,6 +8,7 @@ import {
   Modal,
   TextInput,
   RefreshControl,
+  Switch,
 } from 'react-native';
 import {
   Plus,
@@ -21,6 +22,7 @@ import {
   MoreHorizontal,
   Layers,
   ArrowRight,
+  Settings,
 } from 'lucide-react-native';
 import { Colors } from '@/lib/theme';
 import { LoadingView, ErrorView, EmptyView, PrimaryButton, SecondaryButton } from '@/components/ui';
@@ -97,6 +99,20 @@ export default function EditorScreen() {
   const [showChoiceForm, setShowChoiceForm] = useState(false);
   const [cText, setCText] = useState('');
   const [cTarget, setCTarget] = useState<string | null>(null);
+  const [autoLinkEnabled, setAutoLinkEnabled] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    try {
+      const val = localStorage.getItem('auto_link_enabled');
+      if (val !== null) setAutoLinkEnabled(val === 'true');
+    } catch { /* ignore */ }
+  }, []);
+
+  const toggleAutoLink = (val: boolean) => {
+    setAutoLinkEnabled(val);
+    try { localStorage.setItem('auto_link_enabled', String(val)); } catch { /* ignore */ }
+  };
 
   const unassignedPassages = allPassages.filter((p) => p.chapter_id === null);
   const getChapterPassages = (chId: string) =>
@@ -511,12 +527,30 @@ export default function EditorScreen() {
 
   const handleAutoLink = async () => {
     if (!choicesFor) return;
-    const candidates = getSameChapterPassages(choicesFor);
-    if (candidates.length === 0) return;
-    const target = candidates[0];
+    const chain = [choicesFor, ...getSameChapterPassages(choicesFor)];
+    if (chain.length < 2) return;
     try {
-      const created = await createChoice(choicesFor.id, `Lanjut ke: ${target.title}`, target.id, choices.length);
-      setChoices((prev) => [...prev, created]);
+      const newChoices: Choice[] = [];
+      for (let i = 0; i < chain.length - 1; i++) {
+        const from = chain[i];
+        const to = chain[i + 1];
+        const existingFrom = await fetchChoices(from.id);
+        const alreadyLinked = existingFrom.some((c) => c.to_passage_id === to.id);
+        if (!alreadyLinked) {
+          const c1 = await createChoice(from.id, `Lanjut ke: ${to.title}`, to.id, existingFrom.length);
+          newChoices.push(c1);
+        }
+        const existingTo = await fetchChoices(to.id);
+        const alreadyBack = existingTo.some((c) => c.to_passage_id === from.id);
+        if (!alreadyBack) {
+          const c2 = await createChoice(to.id, `Kembali ke: ${from.title}`, from.id, existingTo.length);
+          newChoices.push(c2);
+        }
+      }
+      if (newChoices.length > 0) {
+        const refreshData = await fetchChoices(choicesFor.id);
+        setChoices(refreshData);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Gagal membuat tautan');
     }
@@ -784,8 +818,15 @@ export default function EditorScreen() {
   return (
     <View style={styles.screen}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Editor</Text>
-        <Text style={styles.headerSubtitle} numberOfLines={1}>{activeStory.title}</Text>
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Editor</Text>
+            <Text style={styles.headerSubtitle} numberOfLines={1}>{activeStory.title}</Text>
+          </View>
+          <Pressable style={styles.settingsBtn} onPress={() => setShowSettings(true)} hitSlop={8}>
+            <Settings size={22} color={Colors.neutral[500]} strokeWidth={2} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
@@ -1177,7 +1218,7 @@ export default function EditorScreen() {
                   )}
                 </ScrollView>
                 <View style={styles.choiceActionsRow}>
-                  {choicesFor && getSameChapterPassages(choicesFor).length > 0 && (
+                  {autoLinkEnabled && choicesFor && getSameChapterPassages(choicesFor).length > 0 && (
                     <Pressable style={styles.autoLinkBtn} onPress={handleAutoLink}>
                       <Link2 size={14} color={Colors.primary[600]} strokeWidth={2} />
                       <Text style={styles.autoLinkText}>Taut Otomatis</Text>
@@ -1187,6 +1228,34 @@ export default function EditorScreen() {
                 </View>
               </View>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Settings Modal */}
+      <Modal visible={showSettings} animationType="slide" transparent onRequestClose={() => setShowSettings(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Pengaturan Editor</Text>
+            <View style={styles.settingRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.settingLabel}>Taut Otomatis</Text>
+                <Text style={styles.settingDesc}>
+                  Menghubungkan bagian otomatis: A↔B dan B→C secara berantai
+                </Text>
+              </View>
+              <Switch
+                value={autoLinkEnabled}
+                onValueChange={toggleAutoLink}
+                trackColor={{ false: Colors.neutral[200], true: Colors.primary[500] }}
+                thumbColor={autoLinkEnabled ? Colors.neutral[0] : Colors.neutral[0]}
+              />
+            </View>
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancel} onPress={() => setShowSettings(false)}>
+                <Text style={styles.modalCancelText}>Tutup</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1223,6 +1292,8 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 28, fontFamily: 'Inter-Bold', color: Colors.neutral[900] },
   headerSubtitle: { fontSize: 13, fontFamily: 'Inter-Regular', color: Colors.neutral[400], marginTop: 4 },
+  headerRow: { flexDirection: 'row', alignItems: 'center' },
+  settingsBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   list: { padding: 16, paddingBottom: 80 },
   // Accordion
   accordionSection: {
@@ -1399,6 +1470,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary[50],
   },
   autoLinkText: { fontSize: 13, fontFamily: 'Inter-Medium', color: Colors.primary[600] },
+  // Settings
+  settingRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16 },
+  settingLabel: { fontSize: 15, fontFamily: 'Inter-Bold', color: Colors.neutral[800] },
+  settingDesc: { fontSize: 12, fontFamily: 'Inter-Regular', color: Colors.neutral[400], marginTop: 4, lineHeight: 16 },
   // Confirm dialog
   confirmSheet: {
     backgroundColor: Colors.neutral[0], borderTopLeftRadius: 24, borderTopRightRadius: 24,
